@@ -1,0 +1,85 @@
+---
+title: "03-b-ASV_to_taxon_decontam"
+author: "Erin D'Agnese"
+date: "2025-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Use this script after taxonomy is finalized to decontaminate at the ASV level then combine reads at the taxon level to make a taxon table to take forward into the Bias correction scripts.
+
+```{r}
+library(here)
+library(tidyverse)
+library(rbiom)
+```
+
+Bring in the ASV table to be decontaminated and the taxonomy table to be combined with it to combine into a taxon/OTU table 
+```{r}
+asv <- read.biom(here("ComBay_run2_2024","tourmaline-18S_CB2_13122024","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+# mifish
+asv <- read.biom(here("MarkerTest","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+tax <- read.csv(here("ComBay_run2_2024","ComBayRun2_18S_final_taxonomy_table.csv"), header = TRUE)
+# for mifish
+tax <- read_tsv(here("MarkerTest","MiFish_final_Taxonomy.tsv"))
+tax %>% rename(c(featureid = "Feature ID", final_taxonomy = Taxon)) -> tax
+
+metadata <- read.table(here("ComBay_run2_2024","tourmaline-18S_CB2_13122024","00-data","metadata.tsv"), sep = "\t", header = T)
+#MiFishMD <- read_tsv(here("PvDietMarkerTest","tourmaline-MiFish-20230130","00-data", "metadata.tsv"))
+```
+
+formatting the ASV table
+```{r}
+asv <- as.matrix(asv$counts)
+asv %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "featureid") -> asv
+```
+
+determine which ASVs from the positive control are in other the samples due to tag-jumping or contamination
+```{r}
+source("Function_decontam_ASV.R")
+#for 18S the initial ones used kangaroo which only gets to mammal assignment so we are going to have to be creative, for ASVs that have few reads in anything other than the pos control
+posCtrlasv <- posctrl_decontam_data(asv, c("Kang_HS_05", "Kang_HS_06", "Kang_SPID-0185", "Kang_SPID-0186"))
+# look at the sum reads and max reads to determine if the positive control specific ASVs that aren't abundant due to the kangaroo/mammal resolution issue, if there are no reads in other samples, we can assume that tag jumping is negligible
+```
+
+So now we need to  modify the taxonomy for the mammals and fish in the 18S, for MiFish you can just go ahead to run the next code chunk and skip this one
+```{r}
+modified_tax <- resolution_18S_tax(tax)
+tax <- modified_tax
+```
+
+merge with tax table
+```{r}
+asv_tax <- left_join(tax,asv, by="featureid")
+```
+
+sum the rows where taxon matches to have taxon level reads
+```{r}
+# Step 1: Convert to long format
+taxon_table_long <- asv_tax %>%
+  pivot_longer(cols = -c(featureid, final_taxonomy),  # Exclude featureid and final_taxonomy from pivoting
+                names_to = "SampleID", 
+                values_to = "nReads")
+
+# Step 2: Group by final_taxonomy and SampleID, then sum the reads
+taxon_table_summarized <- taxon_table_long %>%
+  group_by(final_taxonomy, SampleID) %>%
+  summarise(nReads = sum(nReads, na.rm = TRUE), .groups = 'drop')
+
+# Step 3: Pivot back to wide format
+taxon_table_wide <- taxon_table_summarized %>%
+  pivot_wider(names_from = SampleID, values_from = nReads, values_fill = list(nReads = 0))
+
+# View the result
+print(taxon_table_wide)
+
+#write.csv(taxon_table_wide, "Test_18S_taxon_decontam_table.csv", row.names = F)
+#write.csv(taxon_table_wide, "Test_MiFish_taxon_decontam_table.csv", row.names = F)
+```
+

@@ -1,0 +1,29 @@
+---
+title: "07-Corrected_Tables_Proportion_diet"
+author: "Erin D'Agnese"
+date: "2025-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script is used to take the corrected read tables and the taxonomic assigments to determine proportion of individual prey items based on reads in 18S and MiFish
+
+```{r}
+library(here)
+library(tidyverse)
+library(vegan)
+```
+
+Bring in the cleaned tables at the taxon level not ASV
+```{r}
+# note: these are not the cleaned table, but this is just a place holder to develop script and check that the final_taxonomy script works as expected
+table_18s <- read.csv(here("18S-test", "Test_18S_taxon_decontam_table.csv"), header = T) 
+table_fish <- read.csv(here("MarkerTest","Test_MiFish_taxon_decontam_table.csv"), header = T)
+
+```
+
+first we 
+

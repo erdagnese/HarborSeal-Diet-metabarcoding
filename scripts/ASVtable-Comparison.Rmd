@@ -1,0 +1,1432 @@
+---
+title: "MarkerTest_InitialFormating"
+author: "Erin D'Agnese"
+date: "2023-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script is to take the asv table produced throughh tourmaline for each of the markers and combine them with each of their possible classifications which were produced via blast and vsearch.
+
+```{r}
+library(here)
+library(rbiom)
+library(tidyverse)
+library(Biostrings)
+library(vegan)
+library(janitor)
+```
+
+First we need to pull in the ASV tables for each marker which is in a biom format and then we need to pull out the count data into a matrix with hash IDs as the rows and samples as the columns
+```{r pull in biom and make ASV table}
+MiFishBiom <- read.biom(here("PvDietMarkerTest","MiFish","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+MiFishASV <- as.matrix(MiFishBiom$counts)
+
+CO1Biom <- read.biom(here("PvDietMarkerTest","CO1","tourmaline-CO1-20230316","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+CO1ASV <- as.matrix(CO1Biom$counts)
+
+```
+
+Now pull in the metadata for each 
+```{r}
+MiFishMD <- read_tsv(here("PvDietMarkerTest","MiFish","tourmaline-MiFish-20230130","00-data", "metadata.tsv"))
+
+CO1MD <- read_tsv(here("PvDietMarkerTest","CO1","tourmaline-CO1-20230316","00-data", "metadata.tsv"))
+
+
+```
+
+look for the asv that the kangaroo sample has, go blast that seq on ncbi to check to see if that accession number is represented in the rCrux db and if so whether 
+
+Now let's pull in the taxonomic assignments by hash so we can bind them together and compare
+```{r metadata files}
+MiFish_ZG_tax <- read_tsv(here("PvDietMarkerTest","MiFish","MiFish_final_Taxonomy.tsv"))
+
+CO1_tax <- read_tsv(here("PvDietMarkerTest","CO1","tourmaline-CO1-20230316","02-output-dada2-pe-unfiltered", "01-taxonomy", "taxonomy.tsv"))
+
+Prey16S_tax <- read_tsv(here("PvDietMarkerTest","16S","tourmaline-16S-20230316","02-output-dada2-pe-unfiltered", "01-taxonomy", "taxonomy.tsv"))
+
+Prey18S_tax <- read_tsv(here("PvDietMarkerTest","18S","tourmaline-18S-20230209","02-output-dada2-pe-unfiltered", "01-taxonomy", "taxonomy.tsv"))
+
+```
+Merge the dataframes for each one.
+```{r combine the taxonomy and ASV}
+
+MiFishASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> MiFishASV
+
+MiFish_ZG_tax$hash.id <- MiFish_ZG_tax$`Feature ID`
+MiFish_ZG_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> MiFish_tax
+
+MiFishASVtax <- merge(MiFish_tax,MiFishASV, by = "hash.id") 
+
+CO1ASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> CO1ASV
+
+CO1_tax$hash.id <- CO1_tax$`Feature ID`
+CO1_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> CO1_tax
+
+CO1ASVtax <- merge(CO1_tax,CO1ASV, by = "hash.id") 
+CO1ASVtax %>%
+  select(!Consensus) -> CO1ASVtax
+
+Prey16SASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> Prey16SASV
+
+Prey16S_tax$hash.id <- Prey16S_tax$'Feature ID'
+Prey16S_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> Prey16S_tax
+
+Prey16SASVtax <- merge(Prey16S_tax,Prey16SASV, by = "hash.id") 
+Prey16SASVtax %>%
+  select(!Consensus) -> Prey16SASVtax
+
+Prey18SASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> Prey18SASV
+
+Prey18S_tax$hash.id <- Prey18S_tax$'Feature ID'
+Prey18S_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> Prey18S_tax
+
+Prey18SASVtax <- merge(Prey18S_tax,Prey18SASV, by = "hash.id") 
+Prey18SASVtax %>%
+  select(!Consensus) -> Prey18SASVtax
+
+```
+
+So the ASVtax tables have all the ASVs with their taxonomic assignment, so we can look for ASVs that are missing assignment due to missing accessions in the MiFish and Prey16S rCrux DB
+```{r pull out unassigned}
+Prey16SASVtax %>%
+  filter(Taxon == "Unassigned") -> Unassigned16S # 63 of 473 ASVs
+
+MiFishASVtax %>%
+  filter(Taxon == "Unassigned") -> UnassignedMiFish # 746 of 1001 ASVs
+# these may include spurious reads so lets filter for only those that have more than 20 reads
+
+Unassigned16S %>%
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  filter(sum >= 20) %>% # there are 43 ASVs left with at least 20 reads
+  filter(rowSums(. > 0) >=5) -> Unassigned16Smulti # there are only 2 ASVs that occur in more than one sample - checked one was plainfin midshipman and one was a sole
+
+UnassignedMiFish %>%
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  filter(sum >= 20) %>% # there are 415 ASVs left with at least 20 reads
+  filter(rowSums(. > 0) >=5) %>%
+  relocate(sum, .after = Taxon) -> UnassignedMiFishMulti # there are 323 ASVs that occur more than once and have more than 20 reads
+
+# too many of Mifish to do by hand online, so let's pull a list and then pull out all the seqs in the fasta to blast locally
+
+UnassignedMiFishMulti %>%
+  select(hash.id,Taxon,sum) -> UnassignedMiFishList
+
+```
+
+We need to pull in the fasta file with the hash ids so we can export the fasta to blast-- 
+--only do this once.
+```{r}
+library(Biostrings)
+
+MiFishRepSeqs <- readDNAStringSet(here("PvDietMarkerTest","MiFish","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered", "00-table-repseqs", "repseqs.fasta"))
+
+hash.id <- names(MiFishRepSeqs)
+sequence <- paste(MiFishRepSeqs)
+
+MiFishRepSeqs <- data.frame(hash.id,sequence)
+
+UnassignedMiFishReqSeqs <- left_join(UnassignedMiFishList,MiFishRepSeqs)
+UnassignedMiFishReqSeqs %>%
+  select(hash.id,sequence) -> ForFastaMiFishMissing
+
+colnames(ForFastaMiFishMissing)[colnames(ForFastaMiFishMissing) == "hash.id"] ="name"
+colnames(ForFastaMiFishMissing)[colnames(ForFastaMiFishMissing) == "sequence"] ="seq"
+
+
+source("writeFastaFunction.R")
+
+#writeFasta(ForFastaMiFishMissing, "MiFishUnassignedASV_redo.fasta")
+
+```
+
+These we will use a script to blast+ locally
+
+March 1 first tasks:
+Next get an 18S ref DB from somewhere to run the taxonomy on the 18S denoised seqs.
+Pull the data from the deagle prey markers previous data to compare.
+Determine if the read counts per sample makes sense to look at if the pooling worked right.
+Build a script that compares the different markers - total reads, % unassigned, % host, % prey, % non-target, prey species richness, prey taxa represented, proportion of reads differences between the markers. Compare to the hard parts data as well. 
+After calculating the unassigned and non-target, make dataframes with just prey to compare to past results.
+The marker with the highest percentage of prey and also the biggest richness and closeness to the hard parts should be the ideal choice. 
+Blocker vs no blocker - consider the other marker
+
+
+We'll save this for comparing later
+
+First we need to reduce the OTUs to the taxon level and combine the counts for the same assignments for each marker 
+Need to modify the 18S data so it makes taxons at the family level
+```{r}
+Prey18SASVtax %>%
+  separate(Taxon, "\\;", 
+           into = c("kingdom","phylum","class","order","family","genus","species")) %>%
+  select(-c(genus,species)) %>%
+  mutate(phylum = str_replace(phylum, "p__Vertebrata", "p__Chordata")) %>%
+  unite('Taxon', kingdom:family, sep=";") %>%
+  select(-hash.id) %>%
+  group_by(Taxon) %>%
+  summarise_all(funs(sum))-> Prey18SOTU
+#now we have an OTU table for the 18S data which collapses to family level we can work with later
+```
+
+
+```{r}
+MiFishASVtax %>%
+  select(-hash.id) %>%
+  group_by(Taxon) %>%
+  summarise_all(funs(sum)) -> MiFishTaxon
+
+Prey16SASVtax %>%
+  select(-hash.id) %>%
+  group_by(Taxon) %>%
+  summarise_all(funs(sum)) -> Prey16STaxon
+
+CO1ASVtax %>%
+  select(-hash.id) %>%
+  group_by(Taxon) %>%
+  summarise_all(funs(sum)) -> CO1Taxon
+
+```
+
+
+Okay now we need to make the other markers into long form tables
+```{r}
+MiFishTaxon %>%
+  pivot_longer(cols = starts_with("Mi"),
+               names_to = "Sample_ID",
+               values_to = "reads") -> MiFishTaxonLong
+
+Prey16STaxon %>%
+  pivot_longer(cols = starts_with("16S"),
+               names_to = "Sample_ID",
+               values_to = "reads") -> Prey16STaxonLong
+
+CO1Taxon %>%
+  pivot_longer(cols = starts_with("CO"),
+               names_to = "Sample_ID",
+               values_to = "reads") -> CO1TaxonLong
+
+write.csv(MiFishTaxonLong, "MiFishTaxonLongForm.csv", row.names = FALSE)
+write.csv(Prey16STaxonLong, "Prey16STaxonLongForm.csv", row.names = FALSE)
+write.csv(CO1TaxonLong, "CO1TaxonLongForm.csv", row.names = FALSE)
+```
+
+Let's add some metrics...
+first let's combine all the bacteria
+```{r}
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Bacteria")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Bacteria") %>%
+  relocate(Taxon) -> MiFishTaxonBac
+
+MiFishTaxon %>%
+  filter(!str_detect(Taxon, "Bacteria")) -> MiFishTaxonRest
+
+rbind(MiFishTaxonRest, MiFishTaxonBac) -> MiFishTaxon
+
+CO1Taxon %>%
+  filter(str_detect(Taxon, "Bacteria")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Bacteria") %>%
+  relocate(Taxon) -> CO1TaxonBac
+
+CO1Taxon  %>%
+  filter(!str_detect(Taxon, "Bacteria")) -> CO1TaxonRest
+
+rbind(CO1TaxonRest, CO1TaxonBac) -> CO1Taxon
+
+# prey16S is already all only prey and unassigned
+
+# prey18s also doesn't have bacteria, but like CO1 it needs collapse non-target
+
+```
+
+Next for CO1 and 18S we need to make the non-target euks which are likely environmental contamination, in the guts of prey, etc 
+```{r}
+CO1Taxon %>%
+  filter(str_detect(Taxon, "Chordata|Mollusca|Arthropoda|Annelida|Cephalopoda|Malacostraca")) -> CO1TaxonPrey
+
+anti_join(CO1Taxon, CO1TaxonPrey) -> CO1TaxonNT
+
+CO1TaxonNT %>%
+  filter(str_detect(Taxon, "Unassigned|Bacteria")) -> CO1NTbacUn
+
+anti_join(CO1Taxon, CO1NTbacUn) -> CO1NTEuks
+
+CO1NTEuks %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Non-Target") %>%
+  relocate(Taxon) -> CO1NTEuks
+
+rbind(CO1NTbacUn,CO1NTEuks,CO1TaxonPrey) -> CO1Taxon
+
+Prey18SOTU %>%
+  filter(str_detect(Taxon, "Chordata|Cephalopoda|Malacostraca|Phyllodocida|Unassigned")) -> Prey18STaxonPrey
+
+anti_join(Prey18SOTU,Prey18STaxonPrey) -> Prey18SNTEuks
+
+Prey18SNTEuks %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Non-Target") %>%
+  relocate(Taxon) -> Prey18SNTEuks
+
+rbind(Prey18STaxonPrey,Prey18SNTEuks) -> Prey18STaxon
+
+```
+
+MiFish and CO1 still need to be cleaned a bit for bird contam, and any other taxa that are not considered prey and should be relabled. 
+```{r}
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Aves")) -> MiFishTaxonNT
+
+anti_join(MiFishTaxon, MiFishTaxonNT) -> MiFishTaxon2
+
+MiFishTaxonNT %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Non-Target") %>%
+  relocate(Taxon) -> MiFishTaxonNT
+
+rbind(MiFishTaxon2, MiFishTaxonNT) -> MiFishTaxon3
+
+CO1Taxon %>%
+  filter(str_detect(Taxon, "Aves|Insecta|Clitellata|Arachnida|Collembola|Hexanauplia")) -> CO1TaxonNT2
+
+anti_join(CO1Taxon, CO1TaxonNT2) -> CO1Taxon2
+
+CO1TaxonNT2 %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Non-Target") %>%
+  relocate(Taxon) -> CO1TaxonNT2
+
+rbind(CO1Taxon2, CO1TaxonNT2) -> CO1Taxon
+
+CO1Taxon %>%
+  group_by(Taxon) %>%
+  summarise_all(funs(sum)) -> CO1Taxon
+
+```
+
+
+
+finally let's calc all the reads per taxon
+```{r}
+cols <- c(2:28)
+
+MiFishTaxon$nReads <- apply(MiFishTaxon[,cols],1,sum)
+MiFishTaxon %>%
+  relocate(nReads, .after = Taxon) -> MiFishTaxon
+
+MiFishTaxon %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "All") %>%
+  relocate(subset, .before = nReads)-> MFSampleReads
+
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Actinopteri|Chondrichthyes")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Prey") %>%
+  relocate(subset, .before = nReads) -> MFSampleReadsPrey
+
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Phocidae")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Host") %>%
+  relocate(subset, .before = nReads) -> MFSampleReadsHost
+
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Unassigned")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Unassigned") %>%
+  relocate(subset, .before = nReads) -> MFSampleReadsUn
+
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Bacteria|Aves|Primates")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Non-target") %>%
+  relocate(subset, .before = nReads) -> MFSampleReadsNT
+
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Oncorhynchus")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Salmon") %>%
+  relocate(subset, .before = nReads) -> MFSampleReadsSal
+
+MiFishTaxon %>%
+  filter(str_detect(Taxon, "Chondrichthyes")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Chondrichthyes") %>%
+  relocate(subset, .before = nReads) -> MFSampleReadsChon
+
+rbind(MFSampleReads, MFSampleReadsUn, MFSampleReadsHost, MFSampleReadsNT, MFSampleReadsPrey, MFSampleReadsChon, MFSampleReadsSal) -> MFSamplereadsComp
+
+t(MFSamplereadsComp) -> MFSamplereadsComp
+
+MFSamplereadsComp %>%
+  row_to_names(row_number = 1) %>%
+  as.data.frame() -> MFSamplereadsComp
+
+MFSamplereadsComp2 <- tibble::rownames_to_column(MFSamplereadsComp, "sample_name") 
+j <- c(2:8) # specify columns you want to change
+MFSamplereadsComp2[ , j] <- apply(MFSamplereadsComp2[ , j], 2, function (x) as.numeric(as.character(x)))
+
+```
+
+
+Let's do the same for 16S
+```{r}
+cols <- c(2:28)
+
+Prey16STaxon$nReads <- apply(Prey16STaxon[,cols],1,sum)
+Prey16STaxon %>%
+  relocate(nReads, .after = Taxon) -> Prey16STaxon
+
+Prey16STaxon %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "All") %>%
+  relocate(subset, .before = nReads)-> P16sSampleReads
+
+Prey16STaxon %>%
+  filter(str_detect(Taxon, "Actinopteri|Chondrichthyes")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Prey") %>%
+  relocate(subset, .before = nReads) -> P16sSampleReadsPrey
+
+Prey16STaxon %>%
+  filter(str_detect(Taxon, "Phocidae")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Host") %>%
+  relocate(subset, .before = nReads) -> P16sSampleReadsHost
+
+Prey16STaxon %>%
+  filter(str_detect(Taxon, "Unassigned")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Unassigned") %>%
+  relocate(subset, .before = nReads) -> P16sSampleReadsUn
+
+Prey16STaxon %>%
+  filter(str_detect(Taxon, "Bacteria|Aves|Primates")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Non-target") %>%
+  relocate(subset, .before = nReads) -> P16sSampleReadsNT
+
+Prey16STaxon %>%
+  filter(str_detect(Taxon, "Oncorhynchus")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Salmon") %>%
+  relocate(subset, .before = nReads) -> P16sSampleReadsSal
+
+Prey16STaxon %>%
+  filter(str_detect(Taxon, "Chondrichthyes")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Chondrichthyes") %>%
+  relocate(subset, .before = nReads) -> P16sSampleReadsChon
+
+rbind(P16sSampleReads, P16sSampleReadsUn,P16sSampleReadsHost,P16sSampleReadsNT,P16sSampleReadsPrey,P16sSampleReadsChon,P16sSampleReadsSal) -> P16sSamplereadsComp
+
+t(P16sSamplereadsComp) -> P16sSamplereadsComp
+
+P16sSamplereadsComp %>%
+  row_to_names(row_number = 1) %>%
+  as.data.frame() -> P16sSamplereadsComp
+
+P16sSamplereadsComp2 <- tibble::rownames_to_column(P16sSamplereadsComp, "sample_name") 
+j <- c(2:8) # specify columns you want to change
+P16sSamplereadsComp2[ , j] <- apply(P16sSamplereadsComp2[ , j], 2, function (x) as.numeric(as.character(x)))
+
+
+```
+
+Now let's do it for the CO1
+```{r}
+cols <- c(2:55)
+
+CO1Taxon2$nReads <- apply(CO1Taxon2[,cols],1,sum)
+CO1Taxon2 %>%
+  relocate(nReads, .after = Taxon) -> CO1Taxon2
+
+CO1Taxon2 %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "All") %>%
+  relocate(subset, .before = nReads)-> CO1SampleReads
+
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Actinopteri")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Fish") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsFish
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Actinopteri|Chondrichthyes|Cephalopoda|Callianassidae|Crangonidae|Pandalidae|Polychaeta")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Prey") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsPrey
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Phocidae")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Host") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsHost
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Unassigned")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Unassigned") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsUn
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Bacteria|Aves|Primates|Non-Target")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Non-target") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsNT
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Oncorhynchus")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Salmon") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsSal
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Chondrichthyes")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Chondrichthyes") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsChon
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Cephalopoda")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Cephalopods") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsCeph
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Diprotodontia")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Kangaroo") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsK
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Arthropoda")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Arthropods") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsArt
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Polychaeta")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Polychaets") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsPoly
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Amphipoda|Cancridae|Paguridae|Pinnotheridae|Varunidae|Isopoda|Gastropoda|Euphausiidae|Mysida")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "SecondaryPrey") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsSecond
+
+CO1Taxon2 %>%
+  filter(str_detect(Taxon, "Callianassidae|Crangonidae|Pandalidae")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Shrimp") %>%
+  relocate(subset, .before = nReads) -> CO1SampleReadsShrimp 
+
+
+rbind(CO1SampleReads, CO1SampleReadsUn,CO1SampleReadsHost,CO1SampleReadsNT, CO1SampleReadsSecond, CO1SampleReadsK, CO1SampleReadsPrey, CO1SampleReadsFish, CO1SampleReadsChon, CO1SampleReadsCeph, CO1SampleReadsSal, CO1SampleReadsShrimp, CO1SampleReadsArt, CO1SampleReadsPoly) -> CO1SamplereadsComp
+
+t(CO1SamplereadsComp) -> CO1SamplereadsComp
+
+CO1SamplereadsComp %>%
+  row_to_names(row_number = 1) %>%
+  as.data.frame() -> CO1SamplereadsComp
+
+CO1SamplereadsComp2 <- tibble::rownames_to_column(CO1SamplereadsComp, "sample_name") 
+j <- c(2:15) # specify columns you want to change
+CO1SamplereadsComp2[ , j] <- apply(CO1SamplereadsComp2[ , j], 2, function (x) as.numeric(as.character(x)))
+
+# questions for casey and dyanna, do we think they eat isopods and amphipods cuz we could take those out as secodary or environmental contam
+```
+
+
+```{r}
+cols <- c(2:28)
+
+Prey18STaxon$nReads <- apply(Prey18STaxon[,cols],1,sum)
+Prey18STaxon %>%
+  relocate(nReads, .after = Taxon) -> Prey18STaxon
+
+Prey18STaxon %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "All") %>%
+  relocate(subset, .before = nReads)-> P18sSampleReads
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Actinopterygii")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Fish") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsFish
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Actinopterygii|Chondrichthyes|Cephalopoda|Malacostraca|Polychaeta")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Prey") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsPrey
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Unassigned")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Unassigned") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsUn
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Bacteria|Aves|Primates|Non-Target")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Non-target") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsNT
+
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Chondrichthyes")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Chondrichthyes") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsChon
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Cephalopoda")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Cephalopods") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsCeph
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Mammalia")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Mammal") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsMam
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Polychaeta")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Polychaets") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsPoly
+
+Prey18STaxon %>%
+  filter(str_detect(Taxon, "Malacostraca")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Arthropods") %>%
+  relocate(subset, .before = nReads) -> P18sSampleReadsArthropods
+
+
+rbind(P18sSampleReads, P18sSampleReadsUn,P18sSampleReadsNT,P18sSampleReadsMam, P18sSampleReadsPrey, P18sSampleReadsFish, P18sSampleReadsChon, P18sSampleReadsCeph, P18sSampleReadsArthropods, P18sSampleReadsPoly) -> P18sSamplereadsComp
+
+t(P18sSamplereadsComp) -> P18sSamplereadsComp
+
+P18sSamplereadsComp %>%
+  row_to_names(row_number = 1) %>%
+  as.data.frame() -> P18sSamplereadsComp
+
+
+P18sSampleReadsComp2 <- tibble::rownames_to_column(P18sSamplereadsComp, "sample_name") 
+j <- c(2:11) # specify columns you want to change
+P18sSampleReadsComp2[ , j] <- apply(P18sSampleReadsComp2[ , j], 2, function (x) as.numeric(as.character(x)))
+
+
+# questions for casey and dyanna, do we think they eat isopods and amphipods cuz we could take those out as secodary or environmental contam
+```
+
+
+Okay let's merge the metadata with the reads per group of interest and calc prop of reads for each of these categories
+```{r}
+MFSampleRdMeta <- merge(MiFishMD, MFSamplereadsComp2, by = "sample_name")
+P16sSampleRdMeta <- merge(Prey16SMD, P16sSamplereadsComp2, by = "sample_name")
+CO1SampleRdMeta <- merge(CO1MD, CO1SamplereadsComp2, by = "sample_name")
+P18sSampleRdMeta <- merge(Prey18SMD, P18sSampleReadsComp2, by = "sample_name")
+
+```
+
+```{r}
+MFSampleRdMeta %>%
+  mutate(PrUn = Unassigned / All) %>%
+  relocate(PrUn, .before = Prey) %>%
+  mutate(PrHost = Host / All) %>%
+  relocate(PrHost, .before = Prey) %>%
+  mutate(PrNT = `Non-target` / All) %>%
+  relocate(PrNT, .before = Prey) %>%
+  mutate(PrPreyAll = Prey / All) %>%
+  relocate(PrPreyAll, .before = Salmon) %>%
+  mutate(PrPreyChon = Chondrichthyes / Prey) %>%
+  relocate(PrPreyChon, .before = Salmon) %>%
+  mutate(PrSalAll = Salmon / All) %>%
+  mutate(PrSalPrey = Salmon / Prey) -> MFSampleRdMeta2
+
+
+P16sSampleRdMeta %>%
+  mutate(PrUn = Unassigned / All) %>%
+  relocate(PrUn, .before = Prey) %>%
+  mutate(PrHost = Host / All) %>%
+  relocate(PrHost, .before = Prey) %>%
+  mutate(PrNT = `Non-target` / All) %>%
+  relocate(PrNT, .before = Prey) %>%
+  mutate(PrPreyAll = Prey / All) %>%
+  relocate(PrPreyAll, .before = Salmon) %>%
+  mutate(PrPreyChon = Chondrichthyes / Prey) %>%
+  relocate(PrPreyChon, .before = Salmon) %>%
+  mutate(PrSalAll = Salmon / All) %>%
+  mutate(PrSalPrey = Salmon / Prey) -> P16sSampleRdMeta2
+
+
+P18sSampleRdMeta %>%
+  mutate(PrUn = Unassigned / All) %>%
+  relocate(PrUn, .before = `Non-target`) %>%
+  mutate(PrMam = Mammal / All) %>%
+  relocate(PrMam, .before = Prey) %>%
+  mutate(PrNT = `Non-target` / All) %>%
+  relocate(PrNT, .before = Mammal) %>%
+  mutate(PrPreyAll = Prey / All) %>%
+  relocate(PrPreyAll, .before = Fish) %>%
+  mutate(PrFishPrey = Fish / Prey) %>%
+  relocate(PrFishPrey, .before = Chondrichthyes) %>%
+  mutate(PrPreyChon = Chondrichthyes / Prey) %>%
+  relocate(PrPreyChon, .before = Cephalopods) %>%
+  mutate(PrPreyCep = Cephalopods / Prey) %>%
+  relocate(PrPreyCep, .before = Arthropods) %>%
+  mutate(PrPreyArt = Arthropods / Prey) %>%
+  relocate(PrPreyArt, .before = Polychaets) %>%
+  mutate(PrPreyPol = Polychaets / Prey) -> P18sSampleRdMeta2
+
+
+CO1SampleRdMeta %>%
+  mutate(PrUn = Unassigned / All) %>%
+  relocate(PrUn, .before = `Non-target`) %>%
+  mutate(PrHost = Host / All) %>%
+  relocate(PrHost, .before = Prey) %>%
+  mutate(PrNT = `Non-target` / All) %>%
+  relocate(PrNT, .before = SecondaryPrey) %>%
+  mutate(PrSec = SecondaryPrey / All) %>%
+  relocate(PrSec, .before = Kangaroo) %>%
+  mutate(PrK = Kangaroo / All) %>%
+  relocate(PrK, .before = Prey) %>%  
+  mutate(PrPreyAll = Prey / All) %>%
+  relocate(PrPreyAll, .before = Fish) %>%
+  mutate(PrFishPrey = Fish / Prey) %>%
+  relocate(PrFishPrey, .before = Chondrichthyes) %>%
+  mutate(PrPreyChon = Chondrichthyes / Prey) %>%
+  relocate(PrPreyChon, .before = Cephalopods) %>%
+  mutate(PrPreyCep = Cephalopods / Prey) %>%
+  relocate(PrPreyCep, .before = Shrimp) %>%
+  mutate(PrPreySh = Shrimp / Prey) %>%
+  relocate(PrPreySh, .before = Arthropods) %>%
+  mutate(PrPreySal = Salmon / Prey) %>%
+  relocate(PrPreySal, .before = Shrimp) %>%
+  mutate(PrFishSal = Salmon / Fish) %>%
+  relocate(PrFishSal, .before = Shrimp) %>%
+  mutate(PrArtShr = Shrimp / Arthropods) %>%
+  relocate(PrArtShr, .before = Arthropods) %>%
+  mutate(PrPreyArt = Arthropods / Prey) %>%
+  relocate(PrPreyArt, .before = Polychaets) %>%
+  mutate(PrPreyPol = Polychaets / Prey) -> CO1SampleRdMeta2
+
+
+```
+
+No let's look at proportional differences in CO1 between ones with the blocker and ones without
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyAll, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("CO1 Proportion of Prey in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrUn, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of Unassigned reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrHost, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of Host reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrNT, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0,.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of non-target reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrFishPrey, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of Fish in prey reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyChon, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of Chondrichthyes in prey reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyCep, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of Cephalopod in prey reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreySh, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of Shrimp in prey reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+```{r}
+CO1SampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreySal, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 Proportion of Salmon in prey reads in reactions with and without blocker") +
+  ylim(0,1)
+```
+
+Okay so I feel it is pretty safe to say that with the blocker the CO1 leray marker works better at consistently getting more prey than without, the unassigned reads in reactions with the blocker being higher than without is probably due to many of the reads in the reactions without the blocker going to host. 
+
+Let's look at 18S by itself first
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyAll, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("18S Proportion of Prey in reactions")+
+  ylim(0,1)
+```
+
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrUn, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("18S Proportion of Unassigned reads in reactions") +
+  ylim(0,1)
+```
+
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrMam, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("18S Proportion of Mammal reads in reactions") +
+  ylim(0,1)
+```
+
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrFishPrey, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("18S Proportion of Fish in prey reads in reactions") +
+  ylim(0,1)
+```
+
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyChon, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("18S Proportion of Chondricthyes in prey reads in reactions") +
+  ylim(0,1)
+```
+
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyCep, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("18S Proportion of Cephalopod in prey reads in reactions") +
+  ylim(0,1)
+```
+
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyArt, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("18S Proportion of Arthropods in prey reads in reactions") +
+  ylim(0,1)
+```
+```{r}
+P18sSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrNT, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("18S Proportion of Non-Target reads in reactions") +
+  ylim(0,1)
+```
+
+
+Let's compare 18S and CO1 for what they get proportionally for the same samples
+We need to combine the dataframes
+```{r}
+CO1SampleRdMeta2 %>%
+  mutate(sample = sample_name_id) %>%
+  relocate(sample, .before = scientific_name) %>%
+  separate(sample, into = c("marker","blocker","type","number"), sep = "-") %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") %>%
+  relocate(sample, .before = replicate) -> CO1SampleRdMeta2
+
+P18sSampleRdMeta2 %>% 
+  mutate(sample = sample_name_id) %>%
+  relocate(sample, .before = scientific_name) %>%
+  separate(sample, into = c("marker","type","number"), sep = "-") %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") %>%
+  relocate(sample, .before = replicate) -> P18sSampleRdMeta2
+
+dplyr::bind_rows(CO1SampleRdMeta2,P18sSampleRdMeta2) -> CO1v18s
+
+
+CO1v18s %>%
+  filter(str_detect(target_gene, "CO1_wBlock|Prey_18S")) %>%
+  ggplot(aes(y=PrPreyAll, x=sample, fill = marker)) +
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 vs 18S Proportion prey reads in reactions") +
+  ylim(0,1)
+```
+In general they are similar at the prop of reads going to prey, but in 6 cases 18S was demonstrably better
+
+
+```{r}
+CO1v18s %>%
+  filter(str_detect(target_gene, "CO1_wBlock|Prey_18S")) %>%
+  ggplot(aes(y=PrPreyCep, x=sample, fill = marker)) +
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 vs 18S Proportion of Cephalopod in prey reads") +
+  ylim(0,1)
+```
+In 4 cases CO1 was better at picking up Cephs and in 3 cases 18S was better, this may be a replicate thing
+
+```{r}
+CO1v18s %>%
+  filter(str_detect(target_gene, "CO1_wBlock|Prey_18S")) %>%
+  ggplot(aes(y=PrPreyArt, x=sample, fill = marker)) +
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 vs 18S Proportion of Arthropods in prey reads") +
+  ylim(0,1)
+```
+Really looks like the CO1 is better at picking up the arthropod prey items than the 18S in the diet.
+
+```{r}
+CO1v18s %>%
+  filter(str_detect(target_gene, "CO1_wBlock|Prey_18S")) %>%
+  ggplot(aes(y=PrArtShr, x=sample, fill = marker)) +
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 vs 18S Proportion Shrimp in Arthropods in prey reads") +
+  ylim(0,1)
+```
+
+```{r}
+CO1v18s %>%
+  filter(str_detect(target_gene, "CO1_wBlock|Prey_18S")) %>%
+  ggplot(aes(y=PrFishPrey, x=sample, fill = marker)) +
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 vs 18S Proportion Fish in prey reads") +
+  ylim(0,1)
+```
+
+
+```{r}
+CO1v18s %>%
+  filter(str_detect(target_gene, "CO1_wBlock|Prey_18S")) %>%
+  ggplot(aes(y=PrPreyChon, x=sample, fill = marker)) +
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 vs 18S Proportion of Chondrichthyes in prey reads") +
+  ylim(0,1)
+```
+
+```{r}
+CO1v18s %>%
+  filter(str_detect(target_gene, "CO1_wBlock|Prey_18S")) %>%
+  ggplot(aes(y=PrPreyArt, x=sample, fill = marker)) +
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1, family="sans")) +
+  ggtitle("CO1 vs 18S Proportion of Arthropods in prey reads") +
+  ylim(0,1)
+```
+
+
+
+Okay so it looks like in samples with predominantly fish, 18S does better than CO1, but in samples where chondricthyes, shrimp and cephalopods are pretty predominant CO1 does better even if overall reads are lower. 
+
+
+Okay so from a look, the CO1 is finding shrimp in the samples which agree with hard parts plus 2 other individual samples and the other pool which we didn't know, whereas the 18S marker only found arthropod reads in the ones with hard parts + the pool and another sample CO1 didn't, but not the two CO1 did and not in the proportion you'd expect.
+
+We should also compare MiFish and 16S just to be sure
+```{r}
+MFSampleRdMeta2 %>%
+  mutate(sample = sample_name_id) %>%
+  relocate(sample, .before = scientific_name) %>%
+  separate(sample, into = c("marker","type","number"), sep = "-") %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") %>%
+  relocate(sample, .before = replicate) -> MFSampleRdMeta2
+
+P16sSampleRdMeta2 %>%
+  mutate(sample = sample_name_id) %>%
+  relocate(sample, .before = scientific_name) %>%
+  separate(sample, into = c("marker","type","number"), sep = "-") %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") %>%
+  relocate(sample, .before = replicate) -> P16sSampleRdMeta2
+  
+  
+dplyr::bind_rows(MFSampleRdMeta2,P16sSampleRdMeta2) -> MFv16s
+
+MFSampleRdMeta2 %>%
+  ggplot(aes(x=sample_name, y=PrPreyAll, fill = target_gene))+
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("MiFish Proportion of Prey in reactions")+
+  ylim(0,1)
+
+
+```
+
+```{r}
+MFv16s %>%
+  ggplot(aes(x=sample, y=PrPreyAll, fill = target_gene))+
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("MiFish and 16S Proportion of Prey in reactions")
+
+```
+
+```{r}
+MFv16s %>%
+  ggplot(aes(x=sample, y=PrPreyChon, fill = target_gene))+
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("MiFish and 16S Proportion of Chondrichthyes in Prey in reactions")
+```
+
+
+```{r}
+MFv16s %>%
+  ggplot(aes(x=sample, y=PrSalPrey, fill = target_gene))+
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("MiFish and 16S Proportion of Salmon in Prey in reactions")
+```
+
+```{r}
+MFv16s %>%
+  ggplot(aes(x=sample, y=PrUn, fill = target_gene))+
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("MiFish and 16S Proportion of Unassigned reads")
+```
+
+```{r}
+MFv16s %>%
+  ggplot(aes(x=sample, y=PrHost, fill = target_gene))+
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("MiFish and 16S Proportion of Host reads")
+```
+
+```{r}
+MFv16s %>%
+  ggplot(aes(x=sample, y=PrNT, fill = target_gene))+
+  geom_bar(stat= "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans")) +
+  ggtitle("MiFish and 16S Proportion of Non-target reads")
+```
+
+So while proportionally it looks like 16S is doing better, from looking it looks like the richness is off, so let's look at that.
+
+So before we do presence/absence let's combine all the possible secondary prey items into one taxon in CO1 and clean up the ChordCeph to have the non-targets into the same taxons as the other markers have
+```{r}
+CO1Taxon %>%
+  filter(str_detect(Taxon, "Amphipoda|Cancridae|Paguridae|Pinnotheridae|Varunidae|Isopoda|Gastropoda|Euphausiidae|Mysida|Bivalvia")) -> CO1SecPrey
+
+anti_join(CO1Taxon, CO1SecPrey) -> CO1Taxon3
+
+CO1SecPrey %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Secondary Prey") %>%
+  relocate(Taxon) -> CO1SecPrey
+
+CO1Taxon3 %>%
+  filter(str_detect(Taxon, "Diprotodontia")) -> CO1Kang
+
+anti_join(CO1Taxon3, CO1Kang) -> CO1Taxon4
+
+CO1Kang %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Kangaroo") %>%
+  relocate(Taxon) -> CO1Kang
+
+rbind(CO1Taxon4,CO1SecPrey,CO1Kang) -> CO1Taxon5
+
+```
+
+
+Pull in the data for the Chord/Ceph runs for the same samples
+```{r}
+ChordCeph <- read.csv(here("PCRtest_samples_16sChordCeph.csv"), header = F)
+
+colnames(ChordCeph) <- ChordCeph[1,]
+ChordCeph <- ChordCeph[-1,]
+cols <- names(ChordCeph)[2:34]
+ChordCeph[cols] <- lapply(ChordCeph[cols], as.numeric)
+
+# need to change the headers to the names we used
+SampleMap <- read.csv(here("Sample_ID_map.csv"), header = T)
+# there are samples in here that aren't in the other markers so we need to remove them
+
+SampleMap %>%
+  filter(!str_detect(Sample_ID, "Pv17-174|Pv17-232|Pv17-559|Pv17-601|Pv17-603|Pv17-658|Pv17-666|Pv18-1064|Pv18-1325|Pv18-1369|Pv18-1408")) -> SampleMap
+
+
+#first we need to get the non-target reads into taxon which are similar to the other markers
+ChordCeph %>%
+   filter(str_detect(TaxaID, "Malacostraca|Ascomycota|Aves|Primate|Artiodactyla")) -> ChordCephNT
+
+ChordCeph %>%
+   filter(str_detect(TaxaID, "Carnivora")) -> ChordCephHost
+
+ChordCeph %>% 
+  filter(!str_detect(TaxaID, "Malacostraca|Ascomycota|Aves|Primate|Artiodactyla|Carnivora")) -> ChordCehpRest
+
+ChordCephNT %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(TaxaID = "Eukaryota;Non-Target") %>%
+  relocate(TaxaID) -> ChordCephNT
+
+ChordCephHost %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(TaxaID = "Eukaryota;Host") %>%
+  relocate(TaxaID) -> ChordCephHost
+
+rbind(ChordCehpRest, ChordCephHost, ChordCephNT) -> ChordCeph
+
+# need to change the OTU table into long form tibble to change the sample names
+ChordCeph %>%
+  select(-nReads) %>%
+  pivot_longer(cols = starts_with("1"),
+               names_to = "WDFW.Code",
+               values_to = "reads") -> ChordCephLong
+
+left_join(SampleMap,ChordCephLong, by = "WDFW.Code") -> MappedChordCephLong
+
+MappedChordCephLong %>%
+  select(TaxaID,Sample_ID,reads,pool_id) -> ChordCephLongID
+
+ChordCephLongID$Sample_ID <- paste("ChoCep", ChordCephLongID$Sample_ID, sep = "-")
+
+# make a wide form to manipulate down the line
+ChordCephLongID %>%
+  select(-pool_id) %>%
+  pivot_wider(names_from = Sample_ID, values_from = reads) -> ChordCephWideID
+
+
+ChordCephLongID %>%
+  mutate(TaxaID = str_remove_all(TaxaID, ";NA")) %>%
+  separate(TaxaID, c("kingdom", "phylum", "class", "order", "family", "genus", "species"), sep = ";") %>%
+  mutate(kingdom = str_remove_all(kingdom, "k_")) %>%
+  mutate(phylum = str_remove_all(phylum, "p_")) %>%
+  mutate(class = str_remove_all(class, "c_")) %>%
+  mutate(order = str_remove_all(order, "o_")) %>%
+  mutate(family = str_remove_all(family, "f_")) %>%
+  mutate(genus = str_remove_all(genus, "g_")) %>%
+  mutate(species = str_remove_all(species, "s_")) %>%
+  unite("Taxon", kingdom:species, sep = ";", na.rm = TRUE) -> ChordCephLongID
+
+
+
+
+```
+
+Let's bring in the hard parts data and filter for the samples we used
+```{r}
+HardParts <- read.csv(here("Harbour_Seal_Hardparts_Diet_data.csv"), header = TRUE, )
+
+HardParts %>%
+  filter(!sample == "") -> HardParts
+
+colnames(SampleMap)[1] = "sample"
+
+left_join(SampleMap, HardParts, by = "sample") -> SampleHardParts
+```
+
+Next let's reduce the dataframes down to presence absence and make long form tables which have sample, prey species, marker/method so we can calc richness, and compare the species detected by each. 
+
+```{r}
+MiFishTaxon2 %>%
+  pivot_longer(!Taxon, names_to = "Sample_ID", values_to = "reads") -> MiFishLong
+
+Prey16STaxon %>%
+  select(!nReads) %>%
+  pivot_longer(!Taxon, names_to = "Sample_ID", values_to = "reads") -> Prey16SLong
+
+Prey18STaxon %>%
+  select(!nReads) %>%
+  pivot_longer(!Taxon, names_to = "Sample_ID", values_to = "reads") -> Prey18SLong
+
+CO1Taxon5 %>%
+  pivot_longer(!Taxon, names_to = "Sample_ID", values_to = "reads") -> CO1Long
+
+ChordCephLongID %>%
+  mutate(marker = "ChordCeph") %>%
+  separate(Sample_ID, into = c("marker","type","number"), sep = "-") %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") %>%
+  relocate(sample, .before = reads) %>%
+  mutate_at("reads", as.numeric) -> ChordCephLong2
+
+Prey18SLong %>%
+  mutate(Taxon = str_remove_all(Taxon, ";NA")) %>%
+  separate(Taxon, c("kingdom", "phylum", "class", "order", "family"), sep = ";") %>%
+  mutate(kingdom = str_remove_all(kingdom, "d__")) %>%
+  mutate(phylum = str_remove_all(phylum, " p__")) %>%
+  mutate(class = str_remove_all(class, " c__")) %>%
+  mutate(order = str_remove_all(order, " o__")) %>%
+  mutate(family = str_remove_all(family, " f__")) %>%
+  unite("Taxon", kingdom:family, sep = ";", na.rm = TRUE) %>%
+  separate(Sample_ID, into = c("marker","type","number", "replicate"), sep = "-") %>%
+  mutate(replicate = case_when(str_detect(number, "r") ~ number,
+                                TRUE ~ as.character(replicate))) %>%
+  mutate(number = case_when(str_detect(type, "pool1") ~ "1", 
+                            str_detect(type, "pool2") ~ "2", 
+                            TRUE ~ as.character(number))) %>%
+  mutate(replicate = str_remove(replicate, "r")) %>%
+  mutate(type = case_when(str_detect(type, "pool1|pool2") ~ "pool",
+                          TRUE ~ as.character(type))) %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") -> Prey18SLong
+
+MiFishLong %>%
+  separate(Sample_ID, into = c("marker","type","number", "replicate"), sep = "-") %>%
+  mutate(replicate = case_when(str_detect(number, "r") ~ number,
+                                TRUE ~ as.character(replicate))) %>%
+  mutate(number = case_when(str_detect(type, "pool1") ~ "1", 
+                            str_detect(type, "pool2") ~ "2", 
+                            TRUE ~ as.character(number))) %>%
+  mutate(replicate = str_remove(replicate, "r")) %>%
+  mutate(type = case_when(str_detect(type, "pool1|pool2") ~ "pool",
+                          TRUE ~ as.character(type))) %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") -> MiFishLong
+
+Prey16SLong %>%
+  separate(Sample_ID, into = c("marker","type","number", "replicate"), sep = "-") %>%
+  mutate(replicate = case_when(str_detect(number, "r") ~ number,
+                                TRUE ~ as.character(replicate))) %>%
+  mutate(number = case_when(str_detect(type, "pool1") ~ "1", 
+                            str_detect(type, "pool2") ~ "2", 
+                            TRUE ~ as.character(number))) %>%
+  mutate(replicate = str_remove(replicate, "r")) %>%
+  mutate(type = case_when(str_detect(type, "pool1|pool2") ~ "pool",
+                          TRUE ~ as.character(type))) %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") -> Prey16SLong
+
+CO1Long %>%
+  separate(Sample_ID, into = c("marker","blocker" ,"type","number", "replicate"), sep = "-") %>%
+  mutate(replicate = case_when(str_detect(number, "r") ~ number,
+                                TRUE ~ as.character(replicate))) %>%
+  mutate(number = case_when(str_detect(type, "pool1") ~ "1", 
+                            str_detect(type, "pool2") ~ "2", 
+                            TRUE ~ as.character(number))) %>%
+  mutate(replicate = str_remove(replicate, "r")) %>%
+  mutate(type = case_when(str_detect(type, "pool1|pool2") ~ "pool",
+                          TRUE ~ as.character(type))) %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") -> CO1Long
+
+```
+So now they are all in long-form formats, we now need to make them presence absence like the hardparts
+```{r}
+# we now should be able to combine all of them into one longform table
+
+dplyr::bind_rows(MiFishLong,Prey16SLong,CO1Long,Prey18SLong,ChordCephLong2) -> AllMarkersLong
+
+# then make a presence/absence column
+AllMarkersLong %>%
+  mutate(presence = case_when(reads != 0 ~ 1,
+                              reads == 0 ~ 0)) -> AllMarkersLong
+
+# we have the issue that in the chordceph the sample ids in the pools are still there so we need to convert those to the pool-1 or pool-2 respectively
+
+AllMarkersLong %>%
+  mutate(sample = case_when(pool_id == 1 ~ "pool-1",
+                            pool_id == 2 ~ "pool-2",
+                            TRUE ~ as.character(sample))) %>% #that worked so let's remove pool_id 
+  select(!pool_id) -> AllMarkersLong
+
+# so that is all the data and everything is ready to compare
+```
+
+
+```{r}
+AllMarkersLong %>%
+  group_by(marker, sample) %>%
+  summarise(TaxaRichness = sum(presence)) -> RichnessAll # This doesn't have the non-target and unassigned removed especially from chordCeph... 
+
+AllMarkersLong %>%
+  filter(!str_detect(Taxon, "Unassigned|Bacteria|Non-Target|Secondary Prey|Phocidae|Host|Mammalia|Cichliformes|Kangaroo|Primates")) -> AllMarkersLongPrey
+
+# something weird is going on let's split them back out and see
+AllMarkersLongPrey %>%
+  filter(marker == "MiF") -> MiFLongPrey
+MiFLongPrey %>%
+  group_by(Taxon, sample) %>%
+  summarise(nReads = sum(reads)) -> MiFiCombLong
+  MiFiCombLong %>% pivot_wider(names_from = sample, values_from = nReads) -> MiFCombWide
+
+AllMarkersLongPrey %>%
+  filter(marker == "COI") -> COILongPrey
+
+COILongPrey %>%
+  group_by(Taxon, sample, blocker) %>%
+  summarise(nReads = sum(reads)) -> COICombLong
+  COICombLong %>% pivot_wider(names_from = c(sample,blocker), values_from = nReads) -> COICombWide
+
+AllMarkersLongPrey %>%
+  filter(marker == "ChoCep") -> ChoCepLongPrey
+
+ChoCepLongPrey %>%
+  group_by(Taxon, sample) %>%
+  summarise(nReads = sum(reads)) %>%
+  pivot_wider(names_from = sample, values_from = nReads) -> ChoCepWide
+
+AllMarkersLongPrey %>%
+  filter(marker == "16S") -> P16SLongPrey
+
+
+P16SLongPrey %>%
+  group_by(Taxon, sample) %>%
+  summarise(nReads = sum(reads)) -> P16SCombLong
+  P16SCombLong %>% pivot_wider(names_from = sample, values_from = nReads) -> P16SCombWide
+
+
+AllMarkersLongPrey %>%
+  group_by(marker,blocker,sample, replicate) %>%
+  summarise(TaxaRichness = sum(presence)) -> RichnessPrey
+
+#The replicates need to be collapsed into one
+
+```
+Let's just look at that 
+```{r}
+RichnessPrey %>%
+  ggplot(aes(x=sample, y=TaxaRichness, fill = marker)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust =1 ,family="sans"))
+  
+```
+
+okay so now we need to combine the data species lists from CO1 and MiFish into one, as if that is the paired assay we are going to compare to the chord/ceph primer pair and then we need to see which does better. I suspect that we will see that they do better accross the board other than in the pools since things are diluted in the pools for MiFish and CO1 but were run separately with Chordceph
+
+```{r}
+# need to combine CO1 and MiFish
+AllMarkersLongPrey %>%
+   filter(marker %in% c("MiF", "COI")) -> MiFCO1Long
+
+MiFCO1Long %>%
+  mutate_at('blocker', ~replace_na(.,"NA")) %>%
+  filter(blocker != "NoB") %>%
+  separate(Taxon, c("kingdom", "phylum", "class", "order", "family", "genus", "species"), sep = ";") -> MiFCO1wBLong
+
+```
+
+```{r}
+MiFCO1wBLong %>%
+  mutate(species = coalesce(species, genus)) %>%
+  select(species,sample,marker,replicate, presence) %>%
+  filter(presence == 1) -> SpeciesLongCO1MF
+
+distinct(SpeciesLongCO1MF, species, sample) -> SpeciesLongCO1MFUnique
+
+SpeciesLongCO1MFUnique %>%
+  group_by(sample) %>%
+  summarise(sp.count = n()) %>%
+  mutate(assay = "CO1-MiFish") -> CO1MiFSpRich
+
+AllMarkersLongPrey %>%
+  filter(marker == "ChoCep") %>%
+  filter(presence == 1) %>%
+  group_by(sample) %>%
+  summarise(TaxaRichness = sum(presence))
+  mutate(assay = "ChordCeph") -> ChordCephRich
+
+merge(CO1MiFSpRich, ChordCephRich, by = "sample") -> Compare
+
+```
+
+
+```{r}
+P16SCombWide %>%
+  select(Taxon) %>%
+  separate(Taxon, c("k","p","c","o","f","g","s"), sep = ";") -> P16SSpList
+
+MiFCombWide %>%
+  select(Taxon) %>%
+  separate(Taxon, c("k","p","c","o","f","g","s"), sep = ";") -> MiFishSpList
+
+COICombWide %>%
+  select(Taxon) %>%
+  separate(Taxon, c("k","p","c","o","f","g","s"), sep = ";") -> CO1SpList
+
+ChoCepWide %>%
+  select(Taxon) %>%
+  separate(Taxon, c("k","p","c","o","f","g","s"), sep = ";") %>%
+  mutate(s = str_replace_all(s,"__", "")) %>%
+  mutate(g = str_replace_all(g,"__", "")) %>%
+  mutate(f = str_replace_all(f,"__", "")) %>%
+  mutate(o = str_replace_all(o,"__", "")) -> ChoCepSpList
+
+rbind(P16SSpList, MiFishSpList,CO1SpList,ChoCepSpList) -> AllSpList
+
+distinct(AllSpList) -> AllSpList
+
+```
+

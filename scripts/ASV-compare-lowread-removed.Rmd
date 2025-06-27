@@ -1,0 +1,433 @@
+---
+title: "03b-ASV-rarefy-compare"
+author: "Erin D'Agnese"
+date: "2023-04-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script is to remove potential spurious reads to reanalyze the species richness data for each marker. 
+We will be removing reads that are less than 0.5% of reads in a sample
+
+```{r loading libraries}
+library(here)
+library(rbiom)
+library(tidyverse)
+library(Biostrings)
+library(vegan)
+library(janitor)
+```
+
+
+First we need to pull in the ASV tables for each marker which is in a biom format and then we need to pull out the count data into a matrix with hash IDs as the rows and samples as the columns
+```{r pull in biom and make ASV table}
+MiFishBiom <- read.biom(here("PvDietMarkerTest","MiFish","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+MiFishASV <- as.matrix(MiFishBiom$counts)
+
+CO1Biom <- read.biom(here("PvDietMarkerTest","CO1","tourmaline-CO1-20230316","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+CO1ASV <- as.matrix(CO1Biom$counts)
+
+Prey16SBiom <- read.biom(here("PvDietMarkerTest","16S","tourmaline-16S-20230316","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+Prey16SASV <- as.matrix(Prey16SBiom$counts)
+
+Prey18SBiom <- read.biom(here("PvDietMarkerTest","18S","tourmaline-18S-20230209","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+Prey18SASV <- as.matrix(Prey18SBiom$counts)
+
+```
+
+Now pull in the metadata for each 
+```{r metadata files}
+MiFishMD <- read_tsv(here("PvDietMarkerTest","MiFish","tourmaline-MiFish-20230130","00-data", "metadata.tsv"))
+
+CO1MD <- read_tsv(here("PvDietMarkerTest","CO1","tourmaline-CO1-20230316","00-data", "metadata.tsv"))
+
+Prey16SMD <- read_tsv(here("PvDietMarkerTest","16S","tourmaline-16S-20230316","00-data", "metadata.tsv"))
+
+Prey18SMD <- read_tsv(here("PvDietMarkerTest","18S","tourmaline-18S-20230209","00-data", "metadata.tsv"))
+```
+
+Now let's pull in the taxonomic assignments by hash so we can bind them together and compare
+```{r taxonomy files}
+MiFish_ZG_tax <- read_tsv(here("PvDietMarkerTest","MiFish","MiFish_final_Taxonomy.tsv"))
+
+CO1_tax <- read_tsv(here("PvDietMarkerTest","CO1","tourmaline-CO1-20230316","02-output-dada2-pe-unfiltered", "01-taxonomy", "taxonomy.tsv"))
+
+Prey16S_tax <- read_tsv(here("PvDietMarkerTest","16S","tourmaline-16S-20230316","02-output-dada2-pe-unfiltered", "01-taxonomy", "taxonomy.tsv"))
+
+Prey18S_tax <- read_tsv(here("PvDietMarkerTest","18S","tourmaline-18S-20230209","02-output-dada2-pe-unfiltered", "01-taxonomy", "taxonomy.tsv"))
+
+```
+
+Merge the dataframes for each one.
+```{r combine the taxonomy and ASV}
+
+MiFishASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> MiFishASV
+
+MiFish_ZG_tax$hash.id <- MiFish_ZG_tax$`Feature ID`
+MiFish_ZG_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> MiFish_tax
+
+MiFishASVtax <- merge(MiFish_tax,MiFishASV, by = "hash.id") 
+
+CO1ASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> CO1ASV
+
+CO1_tax$hash.id <- CO1_tax$`Feature ID`
+CO1_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> CO1_tax
+
+CO1ASVtax <- merge(CO1_tax,CO1ASV, by = "hash.id") 
+CO1ASVtax %>%
+  select(!Consensus) -> CO1ASVtax
+
+Prey16SASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> Prey16SASV
+
+Prey16S_tax$hash.id <- Prey16S_tax$'Feature ID'
+Prey16S_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> Prey16S_tax
+
+Prey16SASVtax <- merge(Prey16S_tax,Prey16SASV, by = "hash.id") 
+Prey16SASVtax %>%
+  select(!Consensus) -> Prey16SASVtax
+
+Prey18SASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> Prey18SASV
+
+Prey18S_tax$hash.id <- Prey18S_tax$'Feature ID'
+Prey18S_tax %>%
+  select(!'Feature ID') %>%
+  relocate(hash.id, .before = Taxon) -> Prey18S_tax
+
+Prey18SASVtax <- merge(Prey18S_tax,Prey18SASV, by = "hash.id") 
+Prey18SASVtax %>%
+  select(!Consensus) -> Prey18SASVtax
+
+```
+
+
+Pull in the data for the Chord/Ceph runs for the same samples
+```{r chord ceph input}
+ChordCeph <- read.csv(here("PCRtest_samples_16sChordCeph.csv"), header = F)
+
+colnames(ChordCeph) <- ChordCeph[1,]
+ChordCeph <- ChordCeph[-1,]
+cols <- names(ChordCeph)[2:34]
+ChordCeph[cols] <- lapply(ChordCeph[cols], as.numeric)
+
+# need to change the headers to the names we used
+SampleMap <- read.csv(here("Sample_ID_map.csv"), header = T)
+# there are samples in here that aren't in the other markers so we need to remove them
+
+SampleMap %>%
+  filter(!str_detect(Sample_ID, "Pv17-174|Pv17-232|Pv17-559|Pv17-601|Pv17-603|Pv17-658|Pv17-666|Pv18-1064|Pv18-1325|Pv18-1369|Pv18-1408")) -> SampleMap
+
+# need to change the OTU table into long form tibble to change the sample names
+ChordCeph %>%
+  select(-nReads) %>%
+  pivot_longer(cols = starts_with("1"),
+               names_to = "WDFW.Code",
+               values_to = "reads") -> ChordCephLong
+
+left_join(SampleMap,ChordCephLong, by = "WDFW.Code") -> MappedChordCephLong
+
+MappedChordCephLong %>%
+  select(TaxaID,Sample_ID,reads) -> ChordCephLongID
+
+ChordCephLongID$Sample_ID <- paste("ChoCep", ChordCephLongID$Sample_ID, sep = "-")
+
+as_tibble(ChordCephLongID)
+
+# the only issue is this data is at OTU not ASV level so we should be doing all of this decontam work at the ASV level, which we will for the other markers, but would need all the ASV level tables plus tax from WDFW or raw demultiplexed data+ref db
+
+```
+
+We need all of the tables in the long tibble so we calculate proportion of reads 
+```{r}
+MiFishASVtax %>%
+  pivot_longer(cols = starts_with("Mi"),
+               names_to = "Sample_ID",
+               values_to = "reads") %>%
+  as_tibble() -> MiFishLong
+
+Prey16SASVtax %>%
+  pivot_longer(cols = starts_with("16S"),
+               names_to = "Sample_ID",
+               values_to = "reads") %>%
+  as_tibble() -> Prey16SLong
+
+CO1ASVtax %>%
+  pivot_longer(cols = starts_with("CO"),
+               names_to = "Sample_ID",
+               values_to = "reads") %>%
+  as_tibble() -> CO1Long
+
+```
+
+calculate prop of reads per sample
+```{r}
+
+MiFishLong %>%
+  group_by(Sample_ID) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  dplyr::rename(Total = reads) -> MiFishTotalRds
+
+Prey16SLong %>%
+  group_by(Sample_ID) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  dplyr::rename(Total = reads)-> Prey16STotalRds
+
+CO1Long %>%
+  group_by(Sample_ID) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  dplyr::rename(Total = reads)-> CO1TotalRds
+
+ChordCephLongID %>%
+  group_by(Sample_ID) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  dplyr::rename(Total = reads)-> ChordCephTotalRds
+
+
+left_join(MiFishLong, MiFishTotalRds, by = "Sample_ID") -> MiFishLongRds
+left_join(Prey16SLong, Prey16STotalRds,  by = "Sample_ID") -> Prey16SLongRds
+left_join(CO1Long, CO1TotalRds, by = "Sample_ID") -> CO1LongRds
+left_join(ChordCephLongID, ChordCephTotalRds, by = "Sample_ID") -> ChordCephLongRds
+
+MiFishLongRds %>%
+  mutate(prop = reads / Total) -> MiFishProps
+
+Prey16SLongRds %>%
+  mutate(prop = reads / Total) -> Prey16SProps
+
+CO1LongRds %>%
+  mutate(prop = reads / Total) -> CO1Props
+
+ChordCephLongRds %>%
+  mutate(prop = reads / Total) -> ChordCephProps
+
+```
+
+
+Alright now we need to make some rules to removes reads
+```{r}
+low_prop_cutoff <- 0.005 # this 0.5% proportion of reads
+
+# we have good evidence there is no tag jumping with the MiFish, Prey16s and CO1 from our positive controls, therefore we trust the raw reads more, but let's do this to compare
+# also shouldn't directly compare, due to the reads for chordceph being combined at taxon level, so we should also get that done for the other markers so we can compare
+MiFishProps %>% 
+  mutate(reads_new = case_when(prop <= low_prop_cutoff ~ 0,
+                                TRUE ~ as.numeric(reads))) -> MiFishPropsNew
+
+Prey16SProps %>% 
+  mutate(reads_new = case_when(prop <= low_prop_cutoff ~ 0,
+                                TRUE ~ as.numeric(reads))) -> Prey16SPropsnew
+
+CO1Props %>% 
+  mutate(reads_new = case_when(prop <= low_prop_cutoff ~ 0,
+                                TRUE ~ as.numeric(reads))) -> CO1PropsNew
+
+ChordCephProps  %>% 
+  mutate(reads_new = case_when(prop <= low_prop_cutoff ~ 0,
+                                TRUE ~ as.numeric(reads))) -> ChordCephPropsNew
+
+
+```
+
+Now we can make a modified OTU/ASV table with the low reads removed and set at zero to do the comparison
+```{r}
+ChordCephPropsNew %>%
+  select(TaxaID, Sample_ID, reads_new) -> ChordCephDeconLong
+
+MiFishPropsNew %>%
+  select(hash.id, Taxon, Sample_ID, reads_new) -> MiFishASVDeconLong
+
+Prey16SPropsnew %>%
+  select(hash.id, Taxon, Sample_ID, reads_new) -> Prey16SASVDeconLong
+
+CO1PropsNew %>%
+  select(hash.id, Taxon, Sample_ID, reads_new) -> CO1ASVDeconLong
+
+
+```
+
+
+Let's actually do this with the taxon level OTU table for the new markers so we can directly compare
+```{r}
+#we made the long form version of the taxon level data in 03-ASVtable_Comparison.rmd so we are just going to pull those in
+MiFishTaxonLong <- read.csv(here("MiFishTaxonLongForm.csv"), header = TRUE)
+Prey16STaxonLong <- read.csv(here("Prey16STaxonLongForm.csv"), header = TRUE)
+CO1TaxonLong <- read.csv(here("CO1TaxonLongForm.csv"), header = TRUE)
+
+# now we need to do the same thing with the props
+left_join(MiFishTaxonLong,MiFishTotalRds, by = "Sample_ID") -> MiFishTaxonRds
+left_join(Prey16STaxonLong,Prey16STotalRds, by = "Sample_ID") -> Prey16STaxonRds
+left_join(CO1TaxonLong,CO1TotalRds, by = "Sample_ID") -> CO1TaxonRds
+
+MiFishTaxonRds  %>%
+  mutate(prop = reads / Total) %>% 
+  mutate(reads_new = case_when(prop <= low_prop_cutoff ~ 0,
+                                TRUE ~ as.numeric(reads))) -> MiFishTaxonProps
+
+Prey16STaxonRds %>%
+  mutate(prop = reads / Total) %>% 
+  mutate(reads_new = case_when(prop <= low_prop_cutoff ~ 0,
+                                TRUE ~ as.numeric(reads))) -> Prey16STaxonProps
+
+CO1TaxonRds %>%
+  mutate(prop = reads / Total) %>% 
+  mutate(reads_new = case_when(prop <= low_prop_cutoff ~ 0,
+                                TRUE ~ as.numeric(reads))) -> CO1TaxonProps
+
+
+MiFishTaxonProps %>%
+  select(Taxon, Sample_ID, reads_new) -> MiFishTaxonDeconLong
+
+Prey16STaxonProps %>%
+  select(Taxon, Sample_ID, reads_new) -> Prey16STaxonDeconLong
+
+CO1TaxonProps %>%
+  select(Taxon, Sample_ID, reads_new) -> CO1TaxonDeconLong
+
+
+
+```
+
+Now we need to redo all the analysis to look at species richness and prey identified in each when things that account for less than 0.5% of reads are removed. Again, we have evidence that no tag jumping and minimal contamination are occurring in the CO1, MiFish, and Prey16s so even those small read numbers we have more reason to believe are real. 
+
+```{r}
+MiFishTaxonDeconLong %>%
+  pivot_wider(names_from = Sample_ID, values_from = reads_new) %>%
+  filter(str_detect(Taxon, "Bacteria")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Bacteria") %>%
+  relocate(Taxon) -> MiFishTaxonDeconBac
+
+MiFishTaxonDeconLong %>%
+  pivot_wider(names_from = Sample_ID, values_from = reads_new) %>%
+  filter(!str_detect(Taxon, "Bacteria")) -> MiFishTaxonDeconRest
+
+rbind(MiFishTaxonDeconRest, MiFishTaxonDeconBac) -> MiFishTaxonDecon
+
+MiFishTaxonDecon%>%
+  filter(str_detect(Taxon, "Aves")) -> MiFishTaxonDeconNT
+
+anti_join(MiFishTaxonDecon, MiFishTaxonDeconNT) -> MiFishTaxonDecon2
+
+MiFishTaxonDeconNT %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Non-Target") %>%
+  relocate(Taxon) -> MiFishTaxonDeconNT
+
+rbind(MiFishTaxonDecon2, MiFishTaxonDeconNT) -> MiFishTaxonDecon3
+
+```
+
+
+```{r}
+CO1TaxonDeconLong %>%
+  pivot_wider(names_from = Sample_ID, values_from = reads_new) %>%
+  filter(str_detect(Taxon, "Bacteria")) %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Bacteria") %>%
+  relocate(Taxon) -> CO1TaxonDeconBac
+
+CO1TaxonDeconLong   %>%
+  pivot_wider(names_from = Sample_ID, values_from = reads_new) %>%
+  filter(!str_detect(Taxon, "Bacteria")) -> CO1TaxonDeconRest
+
+rbind(CO1TaxonDeconRest, CO1TaxonDeconBac) -> CO1TaxonDecon
+
+CO1TaxonDecon %>%
+  filter(str_detect(Taxon, "Aves|Insecta|Clitellata|Arachnida|Collembola|Hexanauplia")) -> CO1TaxonDeconNT2
+
+anti_join(CO1TaxonDecon, CO1TaxonDeconNT2) -> CO1TaxonDecon2
+
+CO1TaxonDeconNT2 %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Non-Target") %>%
+  relocate(Taxon) -> CO1TaxonDeconNT2
+
+rbind(CO1TaxonDecon2, CO1TaxonDeconNT2) -> CO1TaxonDecon
+
+CO1TaxonDecon %>%
+  filter(str_detect(Taxon, "Chordata|Mollusca|Arthropoda|Annelida")) -> CO1TaxonDeconPrey
+
+anti_join(CO1TaxonDecon, CO1TaxonDeconPrey) -> CO1TaxonDeconNT
+
+CO1TaxonDeconNT %>%
+  filter(str_detect(Taxon, "Unassigned|Bacteria")) -> CO1DeconNTbacUn
+
+anti_join(CO1TaxonDecon, CO1DeconNTbacUn) -> CO1DeconNTEuks
+
+CO1DeconNTEuks %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(Taxon = "Eukaryota;Non-Target") %>%
+  relocate(Taxon) -> CO1DeconNTEuks
+
+rbind(CO1DeconNTbacUn,CO1DeconNTEuks,CO1TaxonDeconPrey) -> CO1TaxonDecon
+
+
+```
+
+
+
+```{r}
+MiFishTaxonDecon3 %>%
+  pivot_longer(!Taxon, names_to = "Sample_ID", values_to = "reads") -> MiFishTaxonDeconLong2
+
+CO1TaxonDecon %>%
+  pivot_longer(!Taxon, names_to = "Sample_ID", values_to = "reads") -> CO1TaxonDeconLong2
+
+
+MiFishTaxonDeconLong2 %>%
+  separate(Sample_ID, into = c("marker","type","number", "replicate"), sep = "-") %>%
+  mutate(replicate = case_when(str_detect(number, "r") ~ number,
+                                TRUE ~ as.character(replicate))) %>%
+  mutate(number = case_when(str_detect(type, "pool1") ~ "1", 
+                            str_detect(type, "pool2") ~ "2", 
+                            TRUE ~ as.character(number))) %>%
+  mutate(replicate = str_remove(replicate, "r")) %>%
+  mutate(type = case_when(str_detect(type, "pool1|pool2") ~ "pool",
+                          TRUE ~ as.character(type))) %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") -> MiFishTaxonDeconLong2
+
+Prey16STaxonDeconLong %>%
+  separate(Sample_ID, into = c("marker","type","number", "replicate"), sep = "-") %>%
+  mutate(replicate = case_when(str_detect(number, "r") ~ number,
+                                TRUE ~ as.character(replicate))) %>%
+  mutate(number = case_when(str_detect(type, "pool1") ~ "1", 
+                            str_detect(type, "pool2") ~ "2", 
+                            TRUE ~ as.character(number))) %>%
+  mutate(replicate = str_remove(replicate, "r")) %>%
+  mutate(type = case_when(str_detect(type, "pool1|pool2") ~ "pool",
+                          TRUE ~ as.character(type))) %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") -> Prey16STaxonDeconLong
+
+CO1TaxonDeconLong2 %>%
+  separate(Sample_ID, into = c("marker","blocker" ,"type","number", "replicate"), sep = "-") %>%
+  mutate(replicate = case_when(str_detect(number, "r") ~ number,
+                                TRUE ~ as.character(replicate))) %>%
+  mutate(number = case_when(str_detect(type, "pool1") ~ "1", 
+                            str_detect(type, "pool2") ~ "2", 
+                            TRUE ~ as.character(number))) %>%
+  mutate(replicate = str_remove(replicate, "r")) %>%
+  mutate(type = case_when(str_detect(type, "pool1|pool2") ~ "pool",
+                          TRUE ~ as.character(type))) %>%
+  unite(sample, type:number, na.rm = TRUE, sep = "-") -> CO1TaxonDeconLong2
+```
+

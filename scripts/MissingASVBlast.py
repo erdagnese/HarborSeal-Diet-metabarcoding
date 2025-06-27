@@ -1,0 +1,2 @@
+# Use this to blast the unassigned seqs to the local NCBI nucleotide db
+blastn -db '/mnt/d/Projects/2022_wdfw_SPSdiet/NCBI_blast_nt/nt' -query 'MiFishUnassignedASV_redo.fasta' -evalue 1e-3 -max_hsps 5 -out 'MiFishUnassigned_Blast'

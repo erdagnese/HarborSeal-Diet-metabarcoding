@@ -1,0 +1,138 @@
+---
+title: "MiFish_classification_compare"
+author: "Erin D'Agnese"
+date: "2023-03-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loading libraries}
+library(here)
+library(rbiom)
+library(tidyverse)
+library(vegan)
+library(janitor)
+```
+
+Bring in the ASV table 
+```{r pull in biom and make ASV table and bring in metadata}
+MiFishBiom <- read.biom(here("PvDietMarkerTest","MiFish","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+MiFishASV <- as.matrix(MiFishBiom$counts)
+MiFishASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "hash.id") -> MiFishASV
+
+MiFishMD <- read_tsv(here("PvDietMarkerTest","MiFish","tourmaline-MiFish-20230130","00-data", "metadata.tsv"))
+```
+
+Now bring in all the different classifications to compare
+```{r}
+rCrux_MF_tax <- read_tsv(here("PvDietMarkerTest","MiFish","ZG-rCrux-tax-output","taxonomy.tsv"))
+
+local_MF_tax <- read_tsv(here("PvDietMarkerTest","MiFish","ZG-local-fishcard-tax-output","taxonomy.tsv"))
+
+global_MF_tax <- read_tsv(here("PvDietMarkerTest","MiFish","ZG-global-fishcard-tax-output","taxonomy.tsv"))
+```
+
+```{r tax comparison by hash}
+rCrux_MF_tax %>% #need to fix some NA's that exist in the classifications of rCrux 
+  separate(Taxon, c("k","p","c","o","f","g","s"), sep = ";") %>%
+  mutate(k = str_remove_all(k, "NA")) %>%
+  mutate(p = str_remove_all(p, "NA")) %>%
+  mutate(c = str_remove_all(c, "NA")) %>%
+  mutate(o = str_remove_all(o, "NA")) %>%
+  mutate(f = str_remove_all(f, "NA")) %>%
+  mutate(g = str_remove_all(g, "NA")) %>%
+  mutate(s = str_remove_all(s, "NA")) %>%
+  unite("rcrux", k:s, sep = ";", na.rm = TRUE) %>%
+  select(!Consensus) -> rCrux_MF_tax
+
+local_MF_tax %>%
+  rename("local" = "Taxon") %>%
+  select(!Confidence)-> local_MF_tax
+
+global_MF_tax %>%
+  rename("global" = "Taxon") %>%
+  select(!Confidence)-> global_MF_tax
+
+df_list <- list(rCrux_MF_tax,local_MF_tax,global_MF_tax)
+
+df_list %>%
+  reduce(full_join, by= "Feature ID") -> tax_compare
+
+```
+
+
+Lety's pull out the ones that they all agree on
+```{r agreements}
+tax_compare %>%
+  filter(local == global) -> local_global # there are 948 matches between local and global
+
+anti_join(tax_compare,local_global) -> mismatchLG # there are only 53 mismatches between the local and global
+
+local_global %>%
+  filter(local == rcrux) -> allmatch # there are 820 ASVs where are all three classifications match
+
+anti_join(tax_compare, allmatch, by="Feature ID") -> mismatches
+```
+
+We need to deal with all the mismatches and make decisions on which one is the proper assignments
+```{r local and global decisions}
+mismatches %>%
+  filter(local == global) -> mismatchrcrux
+
+anti_join(mismatches,mismatchrcrux) -> check #wanted to make sure the same number of ASVs of mismatch global and local showed up here
+
+mismatchLG %>%
+  filter(local == "Unassigned") %>%
+  mutate(final = global) -> decisionLGmis # basically just the mammals 
+
+anti_join(mismatchLG,decisionLGmis) -> mismatchLocalassign
+
+mismatchLocalassign %>% # these we trust the local db over the global or the rcrux
+  mutate(final = local) -> decisionLGmis2
+
+rbind(decisionLGmis,decisionLGmis2) -> decision1
+```
+
+Let's handle the rest of the mismatches
+```{r}
+anti_join(mismatches,decision1) -> mismatches2 #these have local and global in agreement
+
+mismatches2 %>%
+  filter(local == "Unassigned") %>%
+  filter(str_detect(rcrux, "Bacteria")) %>%
+  mutate(final = "Bacteria") -> decisionBac
+
+# check to see if there are any left
+anti_join(mismatches2,decisionBac, by = "Feature ID") -> check2
+
+check2 %>%
+  filter(local != global) -> check2 # no rows where global and local don't match
+
+mismatches2 %>%
+  filter(local != "Unassigned") %>%
+  filter(local == global) %>%
+  mutate(final = local) -> decision2
+
+rbind(decision1,decision2,decisionBac) -> decision3 #so all the mismatches have a final tax assignment
+
+#let's make a column with the final assignment for when they all match and then combine and create the final tax_assignment dataframe for mifish 
+
+allmatch %>%
+  mutate(final = local) -> decision4
+
+rbind(decision3,decision4) -> finaldecision
+
+finaldecision %>%
+  select("Feature ID", final) %>%
+  rename(Taxon = final) -> MiFish_TaxAssign
+
+write.table(MiFish_TaxAssign, file='D://Projects/2022_wdfw_SPSdiet/PvDietMarkerTest/MiFish/MiFish_final_Taxonomy.tsv', quote=FALSE, sep='\t', col.names = TRUE, row.names = FALSE)
+
+```
+

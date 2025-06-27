@@ -1,0 +1,12 @@
+---
+title: "05-Tissue_bias_correction"
+author: "Erin D'Agnese"
+date: "2025-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is the script to use after amplification bias correction of the read depths, first we must use the the corrected tissue mixture results post amplification bias correction to determine how much bais is attributed to tissue composition

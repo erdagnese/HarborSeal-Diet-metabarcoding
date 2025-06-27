@@ -1,0 +1,18 @@
+---
+title: "06-Digestion_bias_correction"
+author: "Erin D'Agnese"
+date: "2025-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script analyzes the error due to digestion bias in the controlled feeding study after correcting reads for the amplification bias and the tissue bias. 
+
+This script does the following:
+1. identifies the remaining bias in the controlled feeding study
+2. determines corrections for the different groups of prey
+3. applies the corrections to the controlled feeding results to confirm usage
+4. applies the corrections to the wild scats to return a final fully corrected table of corrected reads

@@ -1,0 +1,12 @@
+---
+title: "04-Amplification_bias_correction"
+author: "Erin D'Agnese"
+date: "2025-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script is used after tourmaline to correct reads base don amplification bias using the model and mock community sequencing. 

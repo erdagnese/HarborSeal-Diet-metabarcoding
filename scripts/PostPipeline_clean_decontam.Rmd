@@ -1,0 +1,218 @@
+---
+title: "1R_PostPipeline_depth_decontam"
+author: "Erin D'Agnese"
+date: "2024-09-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+This script is used after tourmaline for both the MiFish and COI data for seal diet analysis. It will follow the following procedure:
+1.Import and create Taxtables, ASV tables, and Metadata for each
+2. MiFish final taxonomy determined from local and universal classifiers
+3. determine read depth by marker for each sample for QC
+4. decontaminate based on controls
+4. Reduce ASVs to prey items 
+
+Libraries
+```{r, include=FALSE}
+library(here)
+library(rbiom)
+library(tidyverse)
+library(phyloseq)
+library(vegan)
+library(janitor)
+```
+
+1. Import data
+```{r}
+MiFishTable <- read.biom(here("2024_COMBAY_Run1", "tourmaline-MiFish_NextSeqCB08302024","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+COITable <- read.biom(here("2024_COMBAY_Run1", "tourmaline-COI_NextSeqCB08302024","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+
+COI_tax <- read.table(here("2024_COMBAY_Run1", "tourmaline-COI_NextSeqCB08302024","02-output-dada2-pe-unfiltered", "01-taxonomy", "taxonomy.tsv"), sep = "\t", header = TRUE, check.names=FALSE)
+
+MiFishTaxUni <- read.table(here("2024_COMBAY_Run1", "tourmaline-MiFish_NextSeqCB08302024","02-output-dada2-pe-unfiltered", "01-taxonomyUni", "taxonomy.tsv"), sep = "\t", header = TRUE, check.names=FALSE)
+
+MiFishTaxLoc <- read.table(here("2024_COMBAY_Run1", "tourmaline-MiFish_NextSeqCB08302024","02-output-dada2-pe-unfiltered", "01-taxonomyLocal", "taxonomy.tsv"), sep = "\t", header = TRUE, check.names=FALSE)
+
+ScatLog <- read.csv(here("2024_COMBAY_Run1","Pv_scat_extracts_ComBay2018.csv"),header = TRUE)
+```
+
+
+2. MiFish taxonomy assignment function
+```{r}
+source("MiFish_Tax_compare_function.R")
+source("LCA_function.R")
+
+MiFishTaxCOMP <- compare_taxonomy_tables(MiFishTaxLoc, MiFishTaxUni)
+
+#make sure everything looks right in the output before finalizing the MiFish TaxTable
+MiFishTaxCOMP %>% select("Feature ID", final) %>% dplyr::rename("feature.id" = "Feature ID", "taxon" = "final") -> MiFishTaxTable
+
+
+```
+
+
+3. read depth check between markers
+```{r}
+MiFishASV <- as.matrix(MiFishTable$counts)-> MiFishASV
+COIASV <- as.matrix(COITable$counts)
+
+MiFishASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "feature.id") -> MiFishASV
+
+left_join(MiFishTaxTable,MiFishASV, by="feature.id") -> MiFishASVtax
+
+MiFishASVtax %>%
+  pivot_longer(cols = where(is.numeric), names_to = "Sample.ID", values_to = "reads") -> MiFishLongASVTax
+MiFishLongASVTax %>%
+  group_by(Sample.ID) %>%
+  summarise(totalMiFish = sum(reads, na.rm = TRUE), .groups = "drop") -> MiFish_Reads
+
+COIASV %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column( ., "feature.id") -> COIASV
+
+COI_tax %>%
+  dplyr::rename("feature.id" = "Feature ID") -> COI_tax
+
+COIASVtax <- merge(COI_tax,COIASV, by = "feature.id") 
+COIASVtax %>%
+  select(!Consensus) -> COIASVtax
+
+COIASVtax %>%
+  pivot_longer(cols = where(is.numeric), names_to = "Sample.ID", values_to = "reads") -> COILongASVTax
+
+COILongASVTax %>%
+  group_by(Sample.ID) %>%
+  summarise(totalCOI = sum(reads, na.rm = TRUE), .groups = "drop") -> COI_reads
+
+left_join(MiFish_Reads,COI_reads, by = "Sample.ID") -> SampleReads
+
+SampleReads %>% 
+  mutate("MF:COI" = totalMiFish/totalCOI) -> SampleReads
+
+mean(SampleReads$`MF:COI`) # 12.07098 so more MiFish than COI
+median(SampleReads$`MF:COI`) # 2.800466
+mean(SampleReads$totalCOI) #74435.51 reads avg for COI
+mean(SampleReads$totalMiFish) #70383.73 reads avg for MiFish
+
+```
+
+We should see what the proportion of reads that are prey are in each marker before we settle on the current ratio, let's not get crazy about it and just stick to the larger phylum we consider prey 
+```{r}
+COILongASVTax %>%
+  filter(str_detect(Taxon, "Actinopteri|Cephalopoda|Malacostraca")) %>%
+  group_by(Sample.ID) %>%
+  summarise(COIPreyReads = sum(reads)) %>%
+  ungroup() -> COIPreySum
+
+MiFishLongASVTax %>%
+  filter(str_detect(taxon, "Actinopteri")) %>%
+  group_by(Sample.ID) %>%
+  summarise(MFPreyReads = sum(reads)) %>%
+  ungroup() -> MiFishPreysum
+
+left_join(MiFishPreysum, COIPreySum, by = "Sample.ID") -> SamplePreyRds
+
+left_join(SampleReads,SamplePreyRds, by = "Sample.ID") -> SamplePreyTotalRds
+
+SamplePreyTotalRds %>% 
+  mutate(MFpreyProp = MFPreyReads/totalMiFish) %>% 
+  mutate(COIpreyProp = COIPreyReads/totalCOI) -> SamplePreyTotalRds
+
+mean(SamplePreyTotalRds$COIpreyProp) # 6.2%
+mean(SamplePreyTotalRds$MFpreyProp) # 26%
+
+SamplePreyTotalRds %>% 
+  filter(MFPreyReads > 0) -> MFsuccessReads
+SamplePreyTotalRds %>% 
+  filter(COIPreyReads > 0) -> COIsuccessReads
+
+mean(MFsuccessReads$MFpreyProp) # 29%
+mean(COIsuccessReads$COIpreyProp) # 9.1%
+
+MiFishLongASVTax %>%
+  filter(str_detect(taxon, "Phocidae")) %>%
+  group_by(Sample.ID) %>%
+  summarise(MFSealReads = sum(reads)) %>%
+  ungroup() -> MiFishSealsum
+COILongASVTax %>% 
+  filter(str_detect(Taxon, "Phocidae")) %>%
+  group_by(Sample.ID) %>%
+  summarise(COISealReads = sum(reads)) %>%
+  ungroup() -> COISealsum
+
+left_join(MiFishSealsum, COISealsum, by = "Sample.ID") -> SealReads
+left_join(SamplePreyTotalRds,SealReads, by = "Sample.ID") -> SampleTotals
+
+SampleTotals %>% 
+  mutate(MFPropSeal = MFSealReads/totalMiFish) %>% 
+  mutate(COIPropSeal = COISealReads/totalCOI) -> SampleTotals
+
+mean(SampleTotals$MFPropSeal) #48.6%
+mean(SampleTotals$COIPropSeal) #36.6%
+
+```
+
+We need to check which samples worked in a) MiFish, b) COI, c) both, d) neither
+```{r}
+# first let's filter samples that got <1000 reads 
+SampleTotals %>% 
+  filter(totalMiFish < 1000) %>% 
+  filter(totalCOI < 1000) -> SamplesFail1000 #only one sample
+
+SampleTotals %>% 
+  filter(totalMiFish >= 1000) -> SamplesMF #375 of 378
+
+SampleTotals %>% 
+  filter(totalCOI >= 1000) -> SamplesCOI #331 of 378
+
+# should see ones that had <1000 prey reads
+SamplesMF %>% 
+  filter(MFPreyReads >= 1000) -> SamplesMFprey1k #311
+SamplesCOI %>% 
+  filter(COIPreyReads >= 1000) -> SamplesCOIprey1k #116
+
+# which ones overlap and which don't
+inner_join(SamplesMFprey1k,SamplesCOIprey1k, by="Sample.ID") -> SamplesPrey1k #109 samples where both MiFish and COI had 1000 prey reads
+
+anti_join(SamplesCOIprey1k,SamplesMFprey1k, by="Sample.ID") -> SamplesMismatchCOI #7 that worked in COI but not MiFish CHECK what prey reads are classified as
+anti_join(SamplesMFprey1k,SamplesCOIprey1k, by="Sample.ID") -> SamplesMismatchMF #202 that worked in MiFish and not in COI
+
+SamplesMismatchCOI %>% 
+  select(Sample.ID) %>% 
+  left_join(.,COILongASVTax) %>% 
+  group_by(Sample.ID) %>% 
+  filter(reads > 0) %>% 
+  filter(Taxon != "Unassigned") %>% 
+  ungroup() -> MismatchCOIASVLong # the only prey items are hake and one with Euphasid shrimp
+
+write.csv(SampleTotals, "ComBaySept2024Run1_SampleMetrics.csv", col.names = T, row.names = F)
+write.csv(MiFishLongASVTax, "ComBaySept2024Run1_MiFishLongASV.csv", row.names = F)
+write.csv(COILongASVTax, "ComBaySept2024Run1_COILongASV.csv", row.names = F)
+
+```
+
+```{r}
+ScatLog %>% dplyr::rename("Sample.ID" = "SampleID") -> ScatLog
+left_join(SampleTotals, ScatLog, by = "Sample.ID") -> SampleTotalsMD
+
+#let's see if there are any plates that seem to have the blocker included - no plate that has 
+SampleTotalsMD %>% filter(COISealReads < COIPreyReads) -> SampleCOIblocker
+
+mean(SampleCOIblocker$COIPropSeal) #13.8% seal reads when there are more prey reads than seal reads
+
+SampleTotalsMD %>% filter(COIPropSeal < 0.1) %>% filter(COIpreyProp > 0.1) -> SampleCOIblocker2 # only 7 samples that have less than 10% seal reads and more that 10% prey reads which is the minimum quality we expected
+
+SampleTotalsMD %>% filter(COIpreyProp > 0.1) -> SamplesCOIsuccess # 63 samples with a COI prey prop above 10% so not great
+mean(SamplesCOIsuccess$COIPropSeal) # for the ones that "worked" the mean prop seal reads is 38.6% so no, not even in decent samples did the reaction appear to have the blocker included. 
+
+```
+
+

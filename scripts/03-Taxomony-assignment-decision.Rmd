@@ -1,0 +1,187 @@
+---
+title: "Taxonomy_assignment_compare"
+author: "Erin D'Agnese"
+date: "2025-01-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Taxonomy Comparison Tool
+ 
+This script provides functionality to compare taxonomic assignments from different
+classification methods and reference databases. It supports:
+
+Classification Methods:
+ - Naive Bayes (confidence scores 0-1)
+ - VSEARCH (consensus/identity scores 0-1)
+ - BLAST (consensus/e-values)
+ 
+Input Files:
+ - Expected columns: Feature ID, Taxon, and confidence metric (method-specific)
+ - Supports CSV and TSV formats
+ - Taxonomy format should be "kingdom;phylum;class;order;family;genus;species" where missing levels are left blank
+ - Example: "Chordata;Actinopterygii;Perciformes;;;;" (represents classification to order level)
+
+
+Output:
+ - Original assignments from both methods
+ - Final consensus assignment
+ - Confidence scores
+ - Decision rationale 
+
+# Example usage:
+
+# For naive-bayes classification
+naive_bayes_config <- ClassificationConfig(
+  method = "naive-bayes",
+  score_type = "confidence",
+  score_range = c(0, 1),
+  high_confidence_threshold = 0.98,
+  medium_confidence_threshold = 0.9,
+  low_confidence_threshold = 0.7
+)
+
+# For vsearch
+vsearch_config <- ClassificationConfig(
+  method = "vsearch",
+  score_type = "consensus",
+  score_range = c(0, 1),
+  high_confidence_threshold = 0.97,
+  medium_confidence_threshold = 0.85,
+  low_confidence_threshold = 0.75
+)
+
+# For BLAST
+blast_config <- ClassificationConfig(
+  method = "blast",
+  score_type = "evalue",
+  score_range = c(0, 1e-5),
+  high_confidence_threshold = 1e-100,
+  medium_confidence_threshold = 1e-50,
+  low_confidence_threshold = 1e-10
+)
+
+# Read and merge taxonomy assignments
+merged_assignments <- merge_taxonomy_assignments(
+  local_path = "path/to/local_taxonomy.tsv",
+  universal_path = "path/to/universal_taxonomy.tsv",
+  local_method = "naive-bayes",
+  universal_method = "naive-bayes"
+)
+
+# Compare taxonomic assignments with specified parameters
+results <- compare_taxonomic_assignments(
+  assignments_df = merged_assignments,
+  config = naive_bayes_config
+)
+
+# Example with custom column names if needed
+custom_results <- compare_taxonomic_assignments(
+  assignments_df = merged_assignments,
+  config = naive_bayes_config,
+  local_tax_col = "local_taxonomy",
+  universal_tax_col = "universal_taxonomy",
+  local_conf_col = "local_confidence",
+  universal_conf_col = "universal_confidence"
+)
+
+
+First call in the R script that streamlines this taxonomic assignment
+```{r}
+source("Taxonomy_compare_functions.R")
+```
+
+
+First, we need to combine all three assignments and determine what the least common ancestors are between the assignments. The one we believe the most is the local_full for any representatives in that DB, if there are ones that show up in the universal that aren't in the local_full then we should keep those, the prey is there to gain higher resolution assignments when a higher rank matches.
+```{r}
+source("Functions_three_tax_combine.R")
+```
+
+
+Upload and merge the local and universal taxonomic assignments
+
+For all comparisons, ALWAYS set the second one as the more diverse Reference DB eg the universal if a local v universal assignment is being used
+```{r}
+library(here)
+here("/home/erin/Projects/WDFW/SPSdiet/ComBay_run2_2024")
+here("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S")
+# Read files
+Prey_local_tax <- read_taxonomy("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S/tourmaline-18S_CB3_17122024/02-output-dada2-pe-unfiltered/01-taxonomy-local-prey/taxonomy.tsv")
+Full_local_tax <- read_taxonomy("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S/tourmaline-18S_CB3_17122024/02-output-dada2-pe-unfiltered/01-taxonomy-local-full/taxonomy.tsv")
+universal_tax <- read_taxonomy("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S/tourmaline-18S_CB3_17122024/02-output-dada2-pe-unfiltered/01-taxonomy-universal/taxonomy.tsv")
+
+# Standardize column names for each input data frame
+prey_std <- standardize_taxonomy_cols(Prey_local_tax, "prey")
+full_std <- standardize_taxonomy_cols(Full_local_tax, "full")
+universal_std <- standardize_taxonomy_cols(universal_tax, "universal")
+
+# Combine taxonomies and calculate LCAs
+combined_results <- combine_taxonomies(prey_std, full_std, universal_std)
+```
+
+Now we can start determining final taxonomy based on a decision tree
+
+
+Rule 1: All Three Taxonomies Match Exactly:
+
+    If prey_taxonomy, full_taxonomy, and universal_taxonomy are identical, the final_taxonomy is set to lca_all. This ensures that the LCA is used when all three taxonomies agree.
+
+Rule 2: lca_all_rank is "genus" or "family":
+
+    If the LCA between all three taxonomies is at the genus or family level, the final_taxonomy is set to the full_taxonomy.
+
+Rule 3: lca_all_rank is "order" or "class":
+
+    If the LCA between all three taxonomies is at the order or class level, and the LCA between full_taxonomy and prey_taxonomy is at the species, genus, or family level, the final_taxonomy is set to:
+        full_taxonomy if the highest_confidence is full_confidence.
+        lca_full_prey taxonomy if the highest_confidence is prey_confidence.
+
+Rule 4: universal and full local taxonomies match
+    
+    If the universal and full_local taxonomies match and aren't at kingdom level, then we will take the lca_uni_full as the final_taxonomy
+Rule 5: lca_all_rank and lca_full_prey_rank is "kingdom"
+
+    If the LCA between all three and the LCA between prey and full local are at the kingdom level, but the lca_uni_full is not kingdom the final_taxonomy is set to:
+        full_taxonomy if the full_confidence > universal_confidence.
+        lca_uni_full if the full_confidence < universal_confidence
+
+Rule 6: if prey_rank and full_rank are "kingdom" and the universal isn't take the universal 
+
+Rule 7: if lca_uni_full and lca_uni_prey match and lca_full_prey_rank is species or genus take the lca_full_prey
+        
+Rule 8: lca_all, lca_uni_full, lca_full_prey, lca_uni_prey all match
+    
+    If all the LCA match between all the different comparisons, take that as the final_taxonomy
+        
+```{r}
+source("Function_final_taxonomy_decision_tree.R")
+```        
+        
+```{r}
+# Apply the decision tree to determine final_taxonomy
+final_results <- decision_tree(combined_results)
+
+final_results %>% 
+  relocate(final_taxonomy,.after = "universal_confidence") %>% 
+  relocate(rule_applied, .after = "final_taxonomy")-> final_results
+
+# Summarize the results
+summary_results <- summarize_rules(final_results)
+
+# Print the summary
+print(summary_results)
+
+
+```
+Okay now we can pull the final taxonomy, with the featureid to merge with the ASV table for the further analysis
+```{r}
+final_results %>% 
+  dplyr::select(featureid, final_taxonomy) -> final_tax_table
+
+write.csv(final_tax_table, "ComBayRun3_18S_final_taxonomy_table.csv", row.names = F)
+```
+
+

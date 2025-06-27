@@ -1,0 +1,1121 @@
+---
+title: "Diet_data_manipulation"
+output: html_document
+date: "2022-10-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(here)
+library(tidyverse)
+library(janitor)
+```
+
+```{r}
+SPSotu <- read.csv(here("Diet", "WDFW_lab", "level-7.csv"), as.is=1, header=F)
+SPSruns <- read.csv(here("Diet", "WDFW_lab", "run_list_metadata.csv"), header=T)
+
+```
+
+
+
+Let's first get the OTU table into something useable
+```{r}
+# swidtch column and rows
+t(SPSotu) -> SPSchord
+SPSchord %>%
+  row_to_names(row_number = 1) -> SPSchord
+
+
+SPSchord %>% 
+  as.data.frame() -> SPSchord
+
+# now we need to change the columns with reads to numeric columns
+i <- c(2:903) # specify columns you want to change
+SPSchord[ , i] <- apply(SPSchord[ , i], 2, function (x) as.numeric(as.character(x)))
+
+SPSchord %>% 
+  rename("taxonomy" = "index") -> SPSchord
+
+SPSchord %>%
+  filter(taxonomy !="BarcodeSequence") %>%
+  filter(taxonomy !="LinkerPrimerSequence") %>%
+  filter(taxonomy !="ReversePrimer") %>%
+  filter(taxonomy !="Description") -> SPStaxotu
+
+# pull out the metadata to match the run to the sample IDs in the metadata 
+SPSotu %>%
+  select(V1,V204) %>%
+  row_to_names(row_number = 1) %>%
+  rename(WDFW.Code = index) %>%
+  rename(Run = "1") -> RunInfo
+
+# add that RunInfo into the metadata
+full_join(SPSruns, RunInfo, by = "WDFW.Code") -> SPSmetadata
+
+
+# separate out the taxonomy classification levels to get a taxon for each OTU/ASV 
+SPStaxotu %>%
+  separate(taxonomy, sep="\\;", into = c("kingdom","phylum","class","order","family","genus","species")) -> SPStaxotu
+
+
+# so now we have an OTU table with taxonomy as rows, and samples as the columns
+# need to get a taxon assigned and make get rid of the rest of tax data so we can do calcs by taxon
+
+# first pull out the non-bacteria OTUs that are assigned to species
+SPStaxotu %>%
+  filter(species !="__") %>%
+  filter(kingdom !="k_Bacteria") -> SPSsplevel
+
+SPSsplevel %>%
+  filter(kingdom != "k_NA") -> SPSsp
+
+# then anti join so we have the rest in another df to assign taxon after
+anti_join(SPStaxotu,SPSsp) -> SPSnoSp
+# make a column for taxon
+
+SPSsp %>%
+  mutate(taxon = species) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species"))-> SPSsp1
+
+SPSsplevel %>%
+  filter(species !="__") %>%
+  filter(kingdom == "k_NA") -> SPSsp2
+
+# THIS SPSsp2 is the one that needs to be modified so that the bacteria have a taxon assignment of bacteria, the plants have a taxon of plant and anyther random things need different assignments  if we are throwing them out
+```
+
+```{r}
+# okay this whole chunk is going to be very annoying...
+# taxon assignemnts that need correcting in SSsp2
+
+SPSsp2 %>%
+  filter(str_detect(species, "Cetobacterium|Mammaliicoccus|Longicatena|Romboutsia|Terrisporobacter|Viridibacillus|Vanrija")) %>%
+  mutate(taxon = "k_Bacteria") %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species")) -> SPSspbac
+
+SPSsp2 %>%
+  filter(str_detect(species, "Digitaria")) %>%
+  mutate(taxon = "k_Plantae") %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species")) -> SPSspplant
+
+
+SPSsp2 %>%
+  filter(str_detect(species, "Leptocottus|Metacarcinus|Pusa|Stomorhina")) %>%
+  mutate(taxon = species) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species")) -> SPSspEuk
+
+SPSsp2 %>%
+  filter(str_detect(species, "Tomentellopsis")) %>%
+  mutate(taxon = "p_Fungi") %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species")) -> SPSspfungi
+
+```
+
+
+
+```{r}
+anti_join(SPSnoSp, SPSsp2) -> SPSnoSp
+
+# collapse all the bacteria to one row/taxon
+
+SPSnoSp %>%
+  filter(kingdom =="k_Bacteria") -> SPSbac
+# antijoin so we have the rest
+anti_join(SPSnoSp, SPSbac) -> SPSnoSpnoBac
+# add taxon for bacterial reads and collapse to bacteria
+
+SPSbac %>%
+  mutate(taxon = kingdom) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species")) -> SPSbactaxon
+
+rbind(SPSbactaxon, SPSspbac) -> SPSbactaxon
+
+SPSbactaxon %>% 
+  group_by(taxon) %>%
+  summarise_all(funs(sum)) -> SPSbactaxon
+# keep this to add into final OTU table 
+
+SPSnoSpnoBac %>% 
+  filter(kingdom == "Unassigned") %>%
+  mutate(taxon = "Unassigned") %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species")) -> SPSun
+  
+SPSnoSpnoBac %>% 
+filter(kingdom == "k_NA") %>%
+  filter(species == "__") %>%
+  mutate(kingdom = "Unassigned") %>%
+  mutate(phylum = "__") %>%
+  mutate(class = "__")%>%
+  mutate(order = "__") %>%
+  mutate(family = "__") %>%
+  mutate(genus = "__") -> SPSun2
+  
+anti_join(SPSnoSpnoBac,SPSun2) -> SPSnoSpnoBac2
+
+
+
+SPSun2 %>%
+  mutate(taxon = "Unassigned") %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species")) -> SPSun3
+
+SPSunassign <- rbind(SPSun,SPSun3) 
+
+SPSunassign %>%
+  group_by(taxon) %>%
+  summarise_all(funs(sum)) -> SPSunassign
+
+
+SPSnoSpnoBac %>% 
+  filter(genus !="__") -> SPSgen
+
+anti_join(SPSnoSpnoBac, SPSgen) -> SPSnospbacgen
+
+SPSgen %>%
+  mutate(taxon = genus) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species"))-> SPSgen
+
+SPSnospbacgen %>%
+  filter(kingdom != "Unassigned") %>%
+  filter(family != "__") -> SPSfam
+
+anti_join(SPSnospbacgen, SPSfam) -> SPSkpconly
+
+SPSfam %>% 
+  mutate(taxon = family) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species"))-> SPSfam
+
+SPSkpconly %>% 
+  filter(kingdom != "Unassigned") %>%
+ filter(order != "__") -> SPSord 
+
+anti_join(SPSkpconly,SPSord) -> SPSkpconly
+
+SPSord %>%
+  mutate(taxon = order) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species"))-> SPSord
+
+SPSkpconly %>%
+    filter(kingdom != "Unassigned") %>%
+ filter(class != "__") -> SPScl
+
+SPScl %>%
+  mutate(taxon = class) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species"))-> SPScl
+  
+SPSkpconly %>%
+  filter(kingdom != "Unassigned") %>%
+  filter(phylum == "__") %>%
+  mutate(taxon = kingdom) %>%
+  relocate(taxon, .before = kingdom) %>%
+  select(-c("kingdom","phylum","class","order","family","genus","species"))-> SPSking
+  
+  
+SPSOTU <- rbind(SPSbactaxon, SPSunassign, SPSsp1, SPSgen, SPSfam, SPSord, SPScl, SPSking, SPSspplant, SPSspEuk, SPSspfungi)
+
+# so this has 132 OTUs with one Bacteria taxon and one Unnassigned taxon. 
+
+```
+
+
+
+Let's have one which keeps the classification levels for searching 
+```{r}
+# to do this we need to add classification to the ones that are missing those data 
+
+SPStaxotu %>%
+  filter(kingdom == "Unassigned") -> SPSunas
+
+rbind(SPSunas, SPSun2) -> unassigned
+
+unassigned %>%
+  group_by(kingdom) %>%
+  mutate(phylum = NA) %>%
+  mutate(class = NA) %>%
+  mutate(order = NA) %>%
+  mutate(family = NA) %>%
+  mutate(genus = NA) %>% 
+  mutate(species = NA) %>%
+  summarise_all(funs(sum)) -> unassigned
+
+
+SPSsp2 %>%
+  filter(str_detect(species, "Cetobacterium|Mammaliicoccus|Longicatena|Romboutsia|Terrisporobacter|Viridibacillus|Vanrija")) %>%
+  mutate(kingdom = "k_Bacteria") -> SPSspB
+
+rbind(SPSbac,SPSspB) -> SPSbacfull
+
+SPSsp2 %>%
+  filter(str_detect(species, "Digitaria")) %>%
+  mutate(kingdom = "k_Plantae") -> SPSspP
+
+SPSsp2 %>%
+  filter(str_detect(species, "Tomentellopsis")) %>%
+  mutate(phylum = "p_Fungi") %>%
+  mutate(kingdom = "k_Eukaryota") -> SPSspF
+
+SPSsp2 %>%
+  filter(str_detect(species, "Leptocottus|Metacarcinus|Pusa|Stomorhina")) %>%
+  mutate(kingdom = "k_Eukaryota") -> EuksRand
+
+EuksRand %>%
+  mutate(phylum = case_when(str_detect(species, "Leptocottus|Pusa") ~ "p_Chordata",
+                            str_detect(species, "Metacarcinus|Stomorhina") ~ "p_Arthropoda")) %>%
+  mutate(class = case_when(str_detect(species, "Pusa") ~ "c_Mammalia",
+                           str_detect(species, "Leptocottus") ~ "c_Actinopterygii",
+                           str_detect(species, "Metacarcinus")~ "c_Crustacea", 
+                           str_detect(species, "Stomorhina") ~ "c_	Insecta")) %>%
+  mutate(order = case_when(str_detect(species, "Leptocottus") ~ "o_Scorpaeniformes",
+                           str_detect(species, "Pusa") ~ "o_Carnivora",
+                           str_detect(species, "Metacarcinus") ~ "o_Decapoda",
+                           str_detect(species, "Stomorhina") ~ "o_Diptera")) %>%
+  mutate(family = case_when(str_detect(species, "Leptocottus") ~ "f_Cottidae",
+                           str_detect(species, "Pusa") ~ "f_Phocidae",
+                           str_detect(species, "Metacarcinus") ~ "f_Cancridae",
+                           str_detect(species, "Stomorhina") ~ "f_Rhiniidae")) %>%
+  mutate(genus = case_when(str_detect(species, "Leptocottus") ~ "g_Leptocottus",
+                           str_detect(species, "Pusa") ~ "g_Pusa",
+                           str_detect(species, "Metacarcinus") ~ "g_Metacarcinus",
+                           str_detect(species, "Stomorhina") ~ "g_Stomorhina")) -> EuksR2
+
+anti_join(SPStaxotu, SPSsp) -> noSp
+
+noSp %>% 
+  filter(kingdom != "k_NA") %>%
+  filter(kingdom != "k_Bacteria") %>%
+  filter(kingdom != "Unassigned") -> noSp1
+
+rbind(unassigned, SPSsp, SPSbacfull, SPSspP, SPSspF, EuksR2, noSp1) -> SPSall
+# this has the right number of ASVs, but the bacteria are all in there
+
+# set the columns that are samples 
+cols <- c(8:909)
+# add column that sums the reads per OTU
+SPSall$nReads <- apply(SPSall[,cols],1,sum)
+
+# move that column up after species in the df
+SPSall %>%
+  relocate(nReads, .after = species) -> SPSall
+
+SPSall %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "All") %>%
+  relocate(subset, .before = nReads)-> SampleReads
+
+# let's so how many are left after removing unassigned and bacteria
+SPSall %>%
+  filter(kingdom != "k_Bacteria") %>%
+  filter(kingdom != "Unassigned") %>%
+  filter(kingdom != "k_Plantae") -> SPSEuks
+# 128 assigned to eukaryotes that is right
+
+#let's export the SPSall for comparison to the new markers
+write.csv(SPSall, "ChordCephOTU_prevmethods20230203.csv",)
+
+```
+
+
+Okay, so now let's pull out the OTUs that are just prey
+```{r}
+SPSEuks %>% 
+  filter(phylum != "p_Ascomycota") %>%
+  filter(phylum != "p_Bryozoa") %>%
+  filter(phylum != "p_Basidiomycota") %>%
+  filter(phylum != "p_Cercozoa") %>%
+  filter(phylum != "p_Ciliophora") %>%
+  filter(phylum != "p_Mucoromycota") %>%
+  filter(class != "c_Chrysophyceae") %>%
+  filter(phylum != "p_Porifera") %>%
+  filter(phylum != "p_Fungi") %>%
+  filter(phylum != "__") %>%
+  filter(class != "c_Cryptophyceae") %>%
+  filter(class != "c_Chrysophyceae") -> SPSEuks2
+# this includes things like mammals, birds and random other eukaryotes 
+
+# now see how many reads are to Eukaryotes vs all the junk
+SPSEuks2 %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Eukaryotes") %>%
+  relocate(subset, .before = nReads) -> SampleReadsEuk
+
+# we will combine them to the full nReads per sample for each subset so we can look at the percent reads to prey
+
+SPSEuks2 %>%
+  filter(phylum != "p_Cnidaria") %>%
+  filter(class != "c_Aves") %>%
+  filter(class != "c_Mammalia") %>%
+  filter(class != "c_	Insecta") %>%
+  filter(class != "c_Hexanauplia") %>%
+  filter(class != "c_Insecta") -> SPSprey
+
+SPSprey %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Prey") %>%
+  relocate(subset, .before = nReads) -> SampleReadsPrey
+
+# let's look just at # reads to salmon 
+SPSprey %>%
+  filter(genus == "g_Oncorhynchus") %>%
+  summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(subset = "Salmonids") %>%
+  relocate(subset, .before = nReads) -> SampleReadsSal
+
+# okay let's combine the read counts and see what we have in each 
+rbind(SampleReads, SampleReadsEuk, SampleReadsPrey, SampleReadsSal) -> SampleReadsComp
+
+# let's make this a long-form table to do calcs with
+
+t(SampleReadsComp) -> SampleReadsComp2
+
+SampleReadsComp2 %>%
+  row_to_names(row_number = 1) %>%
+  as.data.frame() -> SampleReadsComp2
+  
+j <- c(1:4) # specify columns you want to change
+SampleReadsComp2[ , j] <- apply(SampleReadsComp2[ , j], 2, function (x) as.numeric(as.character(x)))
+
+SampleReadsComp2 <- tibble::rownames_to_column(SampleReadsComp2, "WDFW.Code") 
+
+# let's combine this with the metadata
+SampleRdMeta <- merge(SPSmetadata, SampleReadsComp2, by = "WDFW.Code")
+
+#  okay now I want to find proportion of reads for each
+SampleRdMeta %>%
+  mutate(PrEuk = Eukaryotes / All) %>%
+  relocate(PrEuk, .before = Prey) %>%
+  mutate(PrPreyAll = Prey / All) %>%
+  relocate(PrPreyAll, .before = Salmonids) %>%
+  mutate(PrPreyEuk = Prey / Eukaryotes) %>%
+  relocate(PrPreyEuk, .before = Salmonids) %>%
+  mutate(PrSalAll = Salmonids / All) %>%
+  mutate(PrSalEuks = Salmonids / Eukaryotes) %>%
+  mutate(PrSalPrey = Salmonids / Prey) -> SampleRdMeta
+
+# calculate mean and median read values for all groups after pulling out the NTCs, we will deal with these at some point, but have to sort out how to do that in a systematic way for each run
+SampleRdMeta %>%
+  filter(!str_detect(.$WDFW.Code, "NTC")) -> NoNTC
+
+median(NoNTC$All) #10,880
+```
+
+```{r}
+mean(NoNTC$All) #14,813
+```
+
+```{r}
+median(NoNTC$Eukaryotes) #3824
+```
+```{r}
+mean(NoNTC$Eukaryotes) #7517.379
+```
+
+```{r}
+median(NoNTC$Prey) #1534
+```
+```{r}
+mean(NoNTC$Prey) # 3515
+```
+
+
+let's plot some of this to look at differences
+```{r}
+SampleRdMeta %>% 
+  ggplot(aes(x = PrPreyAll)) + geom_histogram(binwidth = .02, color="black", fill="white") +
+  geom_vline(aes(xintercept=mean(PrPreyAll, na.ram=T)), color="blue", linetype="dashed", size=1) +
+  annotate("text", x=.4, y=60, label="mean proportion of reads") +
+  ggtitle("Proportion of all reads that are Prey species")
+  
+```
+
+```{r}
+SampleRdMeta %>% 
+  ggplot(aes(x = PrSalPrey)) + geom_histogram(binwidth = .05, color="black", fill="white") +
+  #geom_vline(aes(xintercept=mean(PrSalPrey, na.ram=T)), color="blue", linetype="dashed", size=1) +
+  #annotate("text", x=.4, y=60, label="mean proportion of reads") +
+  ggtitle("Proportion of Prey reads that are Salmonids") +
+  ylab("Counts")
+```
+Let's see what the distribution of total reads are in samples, may need to remove samples with low read depth
+```{r}
+SampleRdMeta %>% 
+  ggplot(aes(x = All)) + geom_histogram(binwidth = 500, color="black", fill="white") +
+  geom_vline(aes(xintercept=mean(All, na.ram=T)), color="blue", linetype="dashed", size=1) +
+  annotate("text", x=25000, y=25, label="mean number of reads") +
+  ggtitle("Number of reads in all samples") +
+  ylab("Counts of samples") +
+  xlab("All reads")
+```
+
+```{r}
+SampleRdMeta %>% 
+  ggplot(aes(x = Eukaryotes)) + geom_histogram(binwidth = 500, color="black", fill="white") +
+  geom_vline(aes(xintercept=mean(Eukaryotes, na.ram=T)), color="blue", linetype="dashed", size=1) +
+  annotate("text", x=14000, y=70, label="mean number of reads") +
+  ggtitle("Number of Eukaryote reads in all samples") +
+  ylab("Counts of samples") +
+  xlab("Eukaryote reads")
+```
+
+```{r}
+SampleRdMeta %>% 
+  ggplot(aes(x=All, y=PrSalPrey)) +
+  geom_point() +
+  theme_bw()
+```
+
+```{r}
+SampleRdMeta %>%
+  filter(All >= 5000) -> SampleRdMeta5k
+```
+
+
+```{r}
+SampleRdMeta5k %>%
+  ggplot(aes(x = Eukaryotes)) + geom_histogram(binwidth = 500, color="black", fill="white") +
+  geom_vline(aes(xintercept=mean(Eukaryotes, na.ram=T)), color="blue", linetype="dashed", size=1) +
+  annotate("text", x=14000, y=10, label="mean number of reads") +
+  ggtitle("Number of Eukaryote reads in all samples") +
+  ylab("Counts of samples") +
+  xlab("Eukaryote reads")
+```
+
+```{r}
+SampleRdMeta %>%
+  filter(All >= 10000) %>%
+  ggplot(aes(x=All, y=PrSalPrey)) +
+  geom_point() +
+  theme_bw()
+```
+
+```{r}
+SampleRdMeta10k %>% 
+  ggplot(aes(x = PrSalPrey)) + geom_histogram(binwidth = .05, color="black", fill="white") +
+  #geom_vline(aes(xintercept=mean(PrSalPrey, na.ram=T)), color="blue", linetype="dashed", size=1) +
+  #annotate("text", x=.4, y=60, label="mean proportion of reads") +
+  ggtitle("Proportion of Prey reads that are Salmonids") +
+  ylab("Counts")
+```
+
+
+
+
+```{r}
+SampleRdMeta %>% 
+  ggplot(aes(x = Prey)) + geom_histogram(binwidth = 200, color="black", fill="white") +
+  geom_vline(aes(xintercept=mean(Prey, na.ram=T)), color="blue", linetype="dashed", size=1) +
+  annotate("text", x=8000, y=60, label="mean number of Prey reads") +
+  ggtitle("Number of Prey reads in all samples") +
+  ylab("Counts of samples") +
+  xlab("Prey reads")
+```
+
+Okay so we need to make a rarefaction curve, but just in case let's keep samples that have more than 10k reads total then get rid of samples that only have >10% of reads assigned to Prey
+```{r}
+SampleRdMeta %>% 
+  filter(All >= 10000) -> Sample10kReads # only 473 samples have more than 10k reads total
+```
+
+
+I want to see what the read depth variation is for each run, so let's do rarefaction curves for each one. First, let's make a data set for each one and make an OTU dataframe for each to do the 
+```{r}
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID148")) -> Meta148
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID149")) -> Meta149
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID150")) -> Meta150
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID151")) -> Meta151
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID152")) -> Meta152
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID153")) -> Meta153
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID154")) -> Meta154
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID155")) -> Meta155
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID158")) -> Meta158
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID159")) -> Meta159
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID160")) -> Meta160
+
+
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID148|SpID149")) -> MetaRun1
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID151|SpID152")) -> MetaRun2
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID154|SpID155")) -> MetaRun3
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID150|SpID153|SpID160")) -> MetaRun4
+SampleRdMeta %>% 
+  filter(str_detect(Run, "SpID158|SpID199")) -> MetaRun5
+
+List_Run1 <- list(MetaRun1$WDFW.Code)
+List_Run2 <- list(MetaRun2$WDFW.Code)
+List_Run3 <- list(MetaRun3$WDFW.Code)
+List_Run4 <- list(MetaRun4$WDFW.Code)
+List_Run5 <- list(MetaRun5$WDFW.Code)
+
+
+
+```
+
+
+```{r}
+median(Meta148$All) #6232
+median(Meta149$All) #8656.5
+median(Meta150$All) #4,557.5
+median(Meta151$All) #11,558
+median(Meta152$All) #14,320
+median(Meta153$All) #29,414
+median(Meta154$All) #13,934.5
+median(Meta155$All) #15,427
+median(Meta159$All) #9,038.5
+median(Meta160$All) #15,974
+
+```
+
+Make OTU tables for each run
+```{r}
+SPSall %>% #we need to take the curated OTU table with correct assignment
+  select(!nReads) %>% #remove the nReads column
+  unite('TaxaID', kingdom:species, sep=";") -> OTUtable
+
+VR1 <- unlist(List_Run1)
+VR2 <- unlist(List_Run2)
+VR3 <- unlist(List_Run3)
+VR4 <- unlist(List_Run4)
+VR5 <- unlist(List_Run5)
+
+OTUtable %>%
+  as_tibble() %>%
+  select(c(TaxaID, all_of(VR1))) -> OTUR1
+# make one with no unassigned reads as well (keep bacteria in there for now)
+OTUR1 %>%
+  filter(!str_detect(TaxaID, "Unassigned")) -> OTUR1_clean
+
+OTUtable %>%
+  as_tibble() %>%
+  select(c(TaxaID, all_of(VR2))) -> OTUR2 
+OTUR2 %>%
+  filter(!str_detect(TaxaID, "Unassigned")) -> OTUR2_clean
+
+OTUtable %>%
+  as_tibble() %>%
+  select(c(TaxaID, all_of(VR3))) -> OTUR3
+OTUR3 %>%
+  filter(!str_detect(TaxaID, "Unassigned")) -> OTUR3_clean
+
+OTUtable %>%
+  as_tibble() %>%
+  select(c(TaxaID, all_of(VR4))) -> OTUR4 
+OTUR4 %>%
+  filter(!str_detect(TaxaID, "Unassigned")) -> OTUR4_clean
+
+
+OTUtable %>%
+  as_tibble() %>%
+  select(c(TaxaID, all_of(VR5))) -> OTUR5  
+OTUR5 %>%
+  filter(!str_detect(TaxaID, "Unassigned")) -> OTUR5_clean
+
+
+```
+
+need to get all the OTUtables from the runs into the vegan format Sample x Species matrix (sample as rows, species as matrix). First need to make sure there are no duplicate rows, and if so, then we need to sum those reads into one row.
+```{r}
+length(unique(OTUR1$TaxaID)) # all 198 are unique so all of the OTU run tables should be good
+
+t(OTUR1) -> OTUR1m 
+OTUR1m %>% row_to_names(row_number = 1) -> OTUR1m
+class(OTUR1m) <- "numeric"
+
+t(OTUR1_clean) -> OTUR1_clm
+OTUR1_clm %>% row_to_names(row_number = 1) -> OTUR1_clm
+class(OTUR1_clm) <- "numeric"
+
+
+t(OTUR2) -> OTUR2m 
+OTUR2m %>% row_to_names(row_number = 1) -> OTUR2m
+class(OTUR2m) <- "numeric"
+
+t(OTUR2_clean) -> OTUR2_clm
+OTUR2_clm %>% row_to_names(row_number = 1) -> OTUR2_clm
+class(OTUR2_clm) <- "numeric"
+
+t(OTUR3) -> OTUR3m 
+OTUR3m %>% row_to_names(row_number = 1) -> OTUR3m
+class(OTUR3m) <- "numeric"
+
+t(OTUR3_clean) -> OTUR3_clm
+OTUR3_clm %>% row_to_names(row_number = 1) -> OTUR3_clm
+class(OTUR3_clm) <- "numeric"
+
+t(OTUR4) -> OTUR4m 
+OTUR4m %>% row_to_names(row_number = 1) -> OTUR4m
+class(OTUR4m) <- "numeric"
+
+t(OTUR4_clean) -> OTUR4_clm
+OTUR4_clm %>% row_to_names(row_number = 1) -> OTUR4_clm
+class(OTUR4_clm) <- "numeric"
+
+t(OTUR5) -> OTUR5m 
+OTUR5m %>% row_to_names(row_number = 1) -> OTUR5m
+class(OTUR5m) <- "numeric"
+
+t(OTUR5_clean) -> OTUR5_clm
+OTUR5_clm %>% row_to_names(row_number = 1) -> OTUR5_clm
+class(OTUR5_clm) <- "numeric"
+```
+
+
+Let's make some rarefaction curves for each of the runs to see 
+```{r}
+library(vegan)
+# total number of species in each sample
+S <- specnumber(OTUR1m)
+# number of reads per sample
+raremax <- min(rowSums(OTUR1m)) # 14 
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR1m, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR1, raremax))")
+abline(0, 1)
+rarecurve(OTUR1m, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+
+```
+Let's do a subset and see if that is easier to look at
+```{r}
+rarecurve(OTUR1[1:30,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+So this is weird, it looks like most plataeu but, I wonder if this is a thing with the unassigned reads, I want to try removing those reads and see what that looks like. 
+
+```{r}
+
+S <- specnumber(OTUR1_clm)
+# number of reads per sample
+raremax <- min(rowSums(OTUR1_clm)) # 0 - so there are samples with no reads to anything that are unassigned 
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR1_clm, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR1, raremax))")
+abline(0, 1)
+rarecurve(OTUR1_clm, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+
+```
+
+```{r}
+rarecurve(OTUR1_clm[1:30,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+
+Okay, let's do it for the other runs and see what they look like
+```{r}
+S <- specnumber(OTUR2m)
+# number of reads per sample
+raremax <- min(rowSums(OTUR2m)) # 11 
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR2m, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR1, raremax))")
+abline(0, 1)
+rarecurve(OTUR2m, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+
+```
+Subset of samples 
+```{r}
+rarecurve(OTUR2m[1:30,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+Okay Run3
+```{r}
+S <- specnumber(OTUR3m)
+# number of reads per sample
+raremax <- min(rowSums(OTUR3m)) #9  
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR3m, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR1, raremax))")
+abline(0, 1)
+rarecurve(OTUR3m, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+```
+Subset of the samples
+```{r}
+rarecurve(OTUR3m[30:60,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+
+Okay now run 4
+```{r}
+S <- specnumber(OTUR4m)
+# number of reads per sample
+raremax <- min(rowSums(OTUR4m)) #2  
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR4m, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR1, raremax))")
+abline(0, 1)
+rarecurve(OTUR4m, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+```
+Subset
+```{r}
+rarecurve(OTUR4m[90:120,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+Okay now run 5
+```{r}
+S <- specnumber(OTUR5m)
+# number of reads per sample
+raremax <- min(rowSums(OTUR5m)) #2  
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR5m, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR1, raremax))")
+abline(0, 1)
+rarecurve(OTUR5m, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+```
+
+
+
+Let's pull in the reference database to pull out the mammals
+```{r}
+rarecurve(OTUR5m[60:90,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+Alright so for all runs it looks like 2500 reads to 5000 reads is the point where no more species are found. The one issue is that a good portion of these samples have a good portion of the reads as unassigned. So let's take those out and see what these curves look like.
+
+```{r}
+S <- specnumber(OTUR2_clm)
+# number of reads per sample
+raremax <- min(rowSums(OTUR2_clm)) # 11 
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR2_clm, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR2clean, raremax))")
+abline(0, 1)
+rarecurve(OTUR2_clm, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+
+```
+
+
+```{r}
+rarecurve(OTUR2_clm[60:90,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+
+```{r}
+S <- specnumber(OTUR3_clm)
+# number of reads per sample
+raremax <- min(rowSums(OTUR3_clm)) # 5 
+# rarefy, w/ raremax as input
+Srare <- rarefy(OTUR3_clm, raremax)
+
+#plot rarefaction results
+par(mfrow = c(1,2))
+plot(S, Srare, xlab = "Observed No. of Species", 
+     ylab = "Rarefied No. of Species",
+     main = " plot(rarefy(OTUR3clean, raremax))")
+abline(0, 1)
+rarecurve(OTUR3_clm, step = 20, 
+          sample = raremax, 
+          col = "blue", 
+          cex = 0.6,
+          main = "rarecurve()")
+
+```
+```{r}
+rarecurve(OTUR3_clm[1:30,], step = 20, sample = raremax, col = "blue", cex =      0.6,
+          main = "rarecurve() on subset of data")
+```
+So it looks like for the runs when unassigned reads are taken out the number of reads needed to get to the rarefaction is somewhere in the 5000 to 10000
+
+So let's remove samples that have less than 2500 reads from all the runs and see what we are left with
+
+```{r}
+SampleRdMeta %>%
+  filter(All >= 2500) -> SampleRdMeta2.5k # 786 samples of 902, 2 NTCs are retained 
+```
+
+For our purpose of finding samples to rerun with the new markers, let's get real specific.
+I want to keep samples with a 50% or greater proportion of prey reads and ones that have at least 3 prey species in the diet. I don't want to include bad samples, so let's kick of the minimum number of reads to 7500
+
+```{r}
+SampleRdMeta %>%
+  filter(All >= 7500) -> SampleRdMeta7.5k # 575 samples - 1 NTC is retained
+
+# let's keep things with >30% of reads to prey species
+SampleRdMeta7.5k %>%
+  filter(PrPreyAll >= 0.3) -> SampleRdMeta7.5k30prey # okay so there is one NTC_18 which is on SpID_153 which has quite a few prey reads and thus potentially a lot of contamination in that run, let's avoid those samples and remove them
+
+SampleRdMeta7.5k30prey %>%
+  filter(Run != "SpID153_CEPHCHORD") -> SampleRdMeta7.5k30preydecon # we are at 172 samples, let's make that list to pull out the OTU table for just those 
+
+List_Samples7.5k30prey <- list(SampleRdMeta7.5k30preydecon$WDFW.Code)
+Vsamples7.5k30 <- unlist(List_Samples7.5k30prey)
+
+OTUtable %>%
+  as_tibble() %>%
+  select(c(TaxaID, all_of(Vsamples7.5k30))) -> SubsetSamplesOTU
+
+```
+
+So now we need to clean that up, remove all unassigned and bacterial rows
+```{r}
+SubsetSamplesOTU %>%
+  filter(!str_detect(TaxaID, "Unassigned|Bacteria|Plantae|Ascomycota|Basidiomycota|Bryozoa|Cercozoa|Fungi|Cryptophyceae|Mucoromycota|Chrysophyceae|Ciliophora")) -> SubsetSamplesOTUclean
+
+#okay now we are left with 118 OTUs, these include mammals and birds so we can assess contamination from host/environment
+# we need to find samples with a variety of prey species
+# let's do the taxon table
+
+SPSOTU %>%
+  as_tibble() %>%
+  select(c(taxon, all_of(Vsamples7.5k30))) -> SubsetSamplestaxon
+
+# first let's find richness and abundance for each sample so we can narrow down samples with more than one prey to do this let's try to avoid the mammals and birds
+SubsetSamplesOTUclean %>%
+  filter(!str_detect(TaxaID, "Mammalia|Aves|Cnidaria|Porifera|Insecta|Hexanauplia")) %>% #removes Eukaryotes we don't expect to be prey
+  mutate(Abundance = rowSums(.[2:ncol(.)])) %>%
+  relocate(Abundance, .after = TaxaID) -> SubsetSampOTUabund
+# i suppose remove rows where the abundance is 0
+SubsetSampOTUabund %>%
+  filter(Abundance >=1) -> SubsetSampOTUabund1
+
+colSums(SubsetSampOTUabund1 != 0) -> SpRichness
+
+rbind(SpRichness,SubsetSampOTUabund1) -> SubsetSampOTUabund1Rich
+SubsetSampOTUabund1Rich$TaxaID[1]="Richness"
+
+
+# let's pull out the samples we know have shrimp from the hard parts that overlap with this list
+SubsetSampOTUabund1Rich %>%
+  select("TaxaID", "Abundance", "17RH0227", "18QY0006", "18QY0075", "18QY0076", "18QY0077", "18QY0088", "18QY0091", "18QY0099", "18QY0105") -> SubsetSamplesWShrimp
+
+# let's pull out samples with some sharks and cephalopods
+SubsetSampOTUabund1Rich  %>%
+  filter(str_detect(TaxaID, "Cephalopod")) -> SubsetSampleCeph # again 9 samples with cephalopod reads so let's grab them and see what other prey are in those samples
+
+SubsetSampOTUabund1Rich %>%
+  select("TaxaID", "Abundance", "17RH0080", "17RH0339", "17RH0382", "17RH0388", "18QY0009", "18QY0101", "18QY0312","18QY0372","18QY0384") -> SubSampWCeph
+
+# now i want to do the same for the sharks/rays/ratfish
+SubsetSampOTUabund1Rich  %>%
+  filter(str_detect(TaxaID, "Chondrichthyes")) -> SubSampChondr
+# keep only the columns with the taxaID and with a sum total more than zero so we know that all the columns kept have at least 1 read to a chondricthyes
+SubSampChondr %>%
+  select_if(~ !is.numeric(.) || sum(.) !=0) -> SubSampChondr
+# pull out the vector of the column names we want  
+ChondCol <- colnames(SubSampChondr)
+
+SubsetSampOTUabund1Rich %>%
+  select(ChondCol) -> SubsetSampChondrall
+
+SubsetSampChondrall %>%
+  select("TaxaID", "Abundance", "18QY0388") -> Samp18QY0388
+# check the sample that had crab reads
+SPSall %>%
+  select("kingdom","phylum","class","order","family","genus","species","nReads","17RH0119") -> Crab17RH0119
+#most of the reads were unassigned, may be good to include just to see if more reads come back as prey species, but overall <7k reads so may not be worth re-running unless we want to assess what all we can get with greater read depth and new markers
+
+#one sample with a three spined stickleback
+SPSall %>%
+  select("kingdom","phylum","class","order","family","genus","species","nReads","17RH0055") -> Threespined17RH0055
+
+# let's look for all the samples that have dogfish and see what the other look like
+SPSall %>%
+  filter(genus == "g_Squalus") %>%
+  select_if(~ !is.numeric(.) || sum(.) !=0) -> DogfishSamples
+# now grab those two samples and see what they look like
+SPSall %>%
+  select("kingdom","phylum","class","order","family","genus","species","nReads", "18QY0456", "17RH0249") -> DogfishOTUs
+
+# need some samples with sole
+SPSall %>%
+  filter(family == "f_Pleuronectidae") %>%
+  select_if(~ !is.numeric(.) || sum(.) !=0) -> FlatfishSamples # there are 139 samples, so let's see if any of those are in the high quality samples
+
+FlatfishSampV <- colnames(FlatfishSamples[9:145])
+
+SampleRdMeta7.5k30prey%>%
+  filter(WDFW.Code %in% FlatfishSampV) -> FlatFishGoodSamp
+# okay now select only those columns to look at what other reads are in there
+
+List_FlatFishGoodSamp <- list(FlatFishGoodSamp$WDFW.Code)
+VFlatFishGoodSamp <- unlist(List_FlatFishGoodSamp)
+
+SPSall %>%
+  select("kingdom","phylum","class","order","family","genus","species","nReads",VFlatFishGoodSamp) -> FlatFishOTUs
+
+SubsetSampOTUabund1Rich %>%
+  select("TaxaID", "17RH0232","17RH0235","17RH0249","17RH0279","17RH0336","17RH0342","17RH0382","17RH0388","18QY0003","18QY0012","18QY0092") -> FlatFishSamps2
+
+# need to see if we can get the lamprey sample in the list
+SPSall %>%
+  filter(genus == "g_Lampetra") %>%
+  select_if(~ !is.numeric(.) || sum(.) !=0) -> LampreySamp
+
+SPSall %>%
+   select("kingdom","phylum","class","order","family","genus","species","nReads","18QY0013", ) -> MiscSamples
+
+SPSall %>%
+  filter(genus == "g_Oncorhynchus") %>%
+  select_if(~ !is.numeric(.) || sum(.) !=0) -> SalmonSamps
+
+SalmonSampsV <- colnames(SalmonSamps[9:453])
+
+SampleRdMeta7.5k30preydecon %>%
+  filter(WDFW.Code %in% SalmonSampsV) -> SalmonGoodSamp
+
+List_SalmonGoodSamp <- list(SalmonGoodSamp$WDFW.Code)
+VSalmonGoodSamp <- unlist(List_SalmonGoodSamp)
+
+SPSall %>%
+  select("kingdom","phylum","class","order","family","genus","species","nReads",VSalmonGoodSamp) -> SalmonOTUs
+
+SPSall %>% 
+  select("kingdom","phylum","class","order","family","genus","species","nReads", "18QY0270", "18QY0063", "18QY0333", "17RH0152", "17RH0154", "17RH0174","18QY0344","18QY0427","18QY0054","18QY0084","18QY0088") -> SalmSquidOTUs
+
+SPSall %>%
+  filter(genus == "g_Ammodytes") %>%
+  select_if(~ !is.numeric(.) || sum(.) !=0) -> Sandlance
+SandlanceSampsV <- colnames(Sandlance[9:32])
+SampleRdMeta7.5k30prey %>%
+  filter(WDFW.Code %in% SandlanceSampsV ) -> SandlanceGoodSamp
+
+List_SandlanceSamp <- list(SandlanceGoodSamp$WDFW.Code)
+VSandlanceSamp <- unlist(List_SandlanceSamp)
+
+SPSall %>%
+  select("kingdom","phylum","class","order","family","genus","species","nReads", VSandlanceSamp) -> SandlanceOTUs
+```
+Okay so now we have a list of 32 samples for PCR and I want to pull out all the data for each one into a dataframe and look at them as a whole, so we can see which ones would be good to run individually and which ones we could consider pooling.I made a .csv of the IDs so we can pull that in and use that list to select out the columms we want.
+```{r}
+PCRsamps <- read.csv(here("Diet","WDFW_lab","Samples_PCRtest_Pv2017-18.csv"), header = T)
+# now make a vector of the WDFW.Codes to pull the OTU data out
+List_PCRsamps <- list(PCRsamps$WDFW.Code)
+VPCRsamps<- unlist(List_PCRsamps)
+
+SPSall %>%
+  select("kingdom","phylum","class","order","family","genus","species","nReads",VPCRsamps) -> PCRsamplesOTUs
+
+# let's reduce the bacterial reads to one taxon
+PCRsamplesOTUs %>%
+  mutate(phylum = case_when(kingdom == "k_Bacteria" ~ "NA",
+                            TRUE ~ phylum)) %>%
+  mutate(class = case_when(kingdom == "k_Bacteria" ~ "NA",
+                            TRUE ~ class)) %>%
+  mutate(order = case_when(kingdom == "k_Bacteria" ~ "NA",
+                            TRUE ~ order)) %>%
+  mutate(family = case_when(kingdom == "k_Bacteria" ~ "NA",
+                            TRUE ~ family)) %>%
+  mutate(genus = case_when(kingdom == "k_Bacteria" ~ "NA",
+                            TRUE ~ genus)) %>%
+  mutate(species = case_when(kingdom == "k_Bacteria" ~ "NA",
+                            TRUE ~ species)) %>%
+  select(!"nReads")-> PCRsamplesOTU2
+
+PCRsamplesOTU2 %>%
+  filter(kingdom == "k_Bacteria") %>%
+  group_by(kingdom, phylum,class,order,family,genus,species) %>%
+  summarise_each(funs(sum), 1:32) -> Bac
+
+PCRsamplesOTU2 %>%
+  filter(!kingdom == "k_Bacteria") -> PCRotusNoBac
+
+rbind(PCRotusNoBac,Bac) -> PCRsamplesOTU3
+
+# let's collapse the taxonomy into one column
+PCRsamplesOTU3 %>%
+  unite('TaxaID', kingdom:species, sep=";") -> PCRsamplesOTU4
+
+# let's clean up rows where there are no reads in these samples
+cols <- c(2:33)
+PCRsamplesOTU4$nReads <- apply(PCRsamplesOTU4[,cols],1,sum)
+PCRsamplesOTU4 %>%
+  relocate(nReads, .after = TaxaID) %>%
+  filter(nReads > 0) -> PCRsamplesOTU5
+
+# let's write that to a CSV so we save it for later when we compare the new primers to the old ones
+write.csv(PCRsamplesOTU5, "C:/Users/erind/scripts/Diet/PCRtest_samples_16sChordCeph.csv", row.names = F)
+
+
+
+```
+
+Okay that is all for now with the data with the chord/ceph primers, when we have sequence data back for the run with the new primers we will continue this madness
+

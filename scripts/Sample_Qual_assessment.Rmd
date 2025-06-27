@@ -1,0 +1,179 @@
+---
+title: "CommBaySample"
+author: "Erin D'Agnese"
+date: "2024-01-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(here)
+```
+
+```{r}
+OTU17_18 <- read.csv(here("ChordCephOTU_prevmethods20230203.csv"), header = T, check.names = F)
+map <- read.csv(here("Diet_oldProtocol", "WDFW_lab", "run_list_metadata.csv"), header = T, check.names = F)
+Samples2017 <- read.csv(here("WDFW_2017SampleList.csv"), header = T)
+Samples2018 <- read.csv(here("WDFW_SampleList2018.csv"), header = T)
+MetricsAllSamps <- read.csv(here("ChordCephMetricsAllSamples.csv"), header = T)
+extracts <- read.csv(here("AllHarborSealExtract.csv"), header = T)
+Samples2016 <- read.csv(here("WDFW_2016Samples.csv"), header = T, check.names = F)
+scats2016 <- read.csv(here("WDFW_ScatLog2016.csv"), header = T, check.names = F)
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(stringi)
+```
+
+
+```{r}
+# there is somehting very very annoying about the 2018 sample IDs, in the extract list they all have 4 characters of numbers after the Pv but in the scat log they only have 3 until the ID is 1000 or higher
+Samples2018 %>% 
+  select(!X) %>% 
+  filter(str_detect(Sample_ID, 'Pv')) -> Samples2018
+ 
+Samples2017 %>% 
+  filter(str_detect(Sample_ID, 'Pv')) -> Samples2017
+rbind(Samples2017, Samples2018) -> Samp17_18Map
+
+```
+
+pull in the SampleID the molec lab gave them so we can match them up to the run data
+```{r}
+Samp17_18Map %>% 
+  dplyr::rename(ScatID = Sample_ID) -> Samp17_18Map
+
+extracts %>% 
+  filter(str_detect(PlateID, "Sp")) -> extracts
+
+extracts %>% 
+  filter(duplicated(ScatID)== FALSE)  -> extracts2
+
+anti_join(extracts, extracts2) -> check
+
+
+extracts2 %>%
+  filter(str_detect(ScatID, "Pv18")) -> extracts18
+anti_join(extracts2, extracts18, by = "ScatID") -> extracts3
+
+extracts18 %>%   
+  separate(ScatID, c("Pv", "Num")) -> extracts18_1 
+str_pad(extracts18_1$Num, width = 4, side ="left", pad="0", use_width = TRUE) -> extracts18_2
+
+extracts18_1$Num <- extracts18_2
+
+extracts18_1 %>% 
+  unite("ScatID", Pv:Num, sep = "-") -> extracts18
+rbind(extracts3,extracts18) ->extracts4
+
+extracts4 %>% 
+  filter(str_detect(ScatID, "Pv17|Pv18")) -> extracts17_18
+
+inner_join(Samp17_18Map, extracts17_18, by= "ScatID") -> Extracts17_18 #extracts that match the scat logs 1835 samples
+anti_join(Samp17_18Map, extracts17_18, by= "ScatID") -> NotExtracted17_18 #the scats that haven't been extracted but the scat ID exists = 330
+```
+
+
+```{r}
+scats2016 %>% 
+  select(Sample_ID, Collection_Location, Collection_Date) %>% 
+  dplyr::rename(ScatID = Sample_ID) -> scats2016
+
+Samples2016 %>% 
+  select(SampleID, ScatID) -> Samples2016
+
+anti_join(scats2016, Samples2016, by = "ScatID") -> Notextracted16 #12 not extracted/run from 2016
+
+```
+
+okay so we have now accounted the scats we have extracts for, and the ones we don't. There are 330 samples from 2017-2018 that were not extracted, and 12 from 2016 that weren't extracted. now need to re-run the data that we haven't analyzed yet, but Austen/Ben Nelson did. We have a list of which ones were run later (902 including NTCs) that I have analysed here, and then we will add in the other OTU tables once they are rerun
+
+```{r}
+MetricsAllSamps %>% 
+  drop_na(Year) -> Metrics17_18Samps
+# so there are 861 samples that were run in the second set, let's see which ones we should expect to be in the other samples that were analysed previously
+Metrics17_18Samps %>% 
+  select(WDFW.Code, Sample_ID, Year) %>% 
+  dplyr::rename(ScatID = Sample_ID) %>% 
+  dplyr::rename(SampleID = WDFW.Code) -> DataList17_18
+
+anti_join(Extracts17_18, DataList17_18) -> PrevList17_18 #974 extracts that WDFW lab has, but I don't currently have processed data for.
+inner_join(Extracts17_18, DataList17_18) -> Check1718 #same 861 samples so that's good
+
+#we can check from the list of SPS_data which has the samples Austen analyzed
+```
+Bring in that data file and fix the scatID name
+```{r}
+PrevAnalyzed <- read.csv(here("SPS_data.csv"), header = TRUE, check.names = F)
+#it's in long form so we need to figure out how many samples are included, I assume some were discarded as not passing quality filters
+
+PrevAnalyzed %>% 
+  select(sample_ID) %>% 
+  filter(duplicated(sample_ID)== FALSE) -> PrevAnSamp1
+PrevAnSamp1 %>% 
+  filter(str_detect(sample_ID, "Pv18")) %>% 
+  separate(sample_ID, c("Pv","Num")) -> PrevAn1
+
+str_pad(PrevAn1$Num, width = 4, side ="left", pad="0", use_width = TRUE) -> PrevAn2
+
+PrevAn1$Num <- PrevAn2
+
+PrevAn1 %>% 
+  unite("ScatID", Pv:Num, sep = "-") -> PrevAn18Samps
+
+PrevAnSamp1 %>% 
+  filter(!str_detect(sample_ID, "Pv18")) %>% 
+  separate(sample_ID, c("Pv","Num")) %>%
+  unite("ScatID", Pv:Num, sep = "-") -> PrevSamp1617
+
+rbind(PrevSamp1617,PrevAn18Samps) -> PrevAnalyzedSamp #1589 samples that were analysed and are included in that SPS_data.csv
+  
+```
+
+Let's see if these match up with the samples we know have extracts from our lists
+```{r}
+inner_join(extracts4, PrevAnalyzedSamp, by = "ScatID") -> PrevCheck
+#all 1589 WDFW still has
+
+```
+
+okay now make the summaries Casey asked for.
+```{r}
+rbind(scats2016, Samp17_18Map) -> ScatsAll
+#okay so we need to summarise these to figure out number of samples per month/year and number of samples per month/year/site
+
+ScatsAll %>% 
+  separate(Collection_Date, c("day","month", "year")) -> ScatsAll
+
+ScatsAll %>% 
+  group_by(month,year) %>% 
+  summarise(ScatsM_Y = n()) -> Scats_Month.Year
+
+ScatsAll %>% 
+  group_by(Collection_Location,month,year) %>% 
+   summarise(SiteM_Y = n()) -> Scats_Site.Month.Year
+```
+
+Now do it for extracts
+```{r}
+left_join(extracts4, ScatsAll, by = "ScatID") -> ExtractsAll
+
+ExtractsAll %>% 
+  separate(Collection_Date, c("day","month", "year")) -> ExtractsAll
+
+ExtractsAll %>% 
+  drop_na(Collection_Location) %>% 
+  group_by(month,year) %>% 
+  summarise(ExM_Y = n()) -> Extracts_Month.Year
+
+ExtractsAll %>% 
+  drop_na(Collection_Location) %>%
+  group_by(Collection_Location,month,year) %>% 
+  summarise(SiteM_Y = n()) -> Extracts_Site.Month.Year
+```
+
