@@ -91,6 +91,7 @@ custom_results <- compare_taxonomic_assignments(
 
 First call in the R script that streamlines this taxonomic assignment
 ```{r}
+library(tidyverse)
 source("Taxonomy_compare_functions.R")
 ```
 
@@ -106,12 +107,11 @@ Upload and merge the local and universal taxonomic assignments
 For all comparisons, ALWAYS set the second one as the more diverse Reference DB eg the universal if a local v universal assignment is being used
 ```{r}
 library(here)
-here("/home/erin/Projects/WDFW/SPSdiet/ComBay_run2_2024")
-here("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S")
+
 # Read files
-Prey_local_tax <- read_taxonomy("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S/tourmaline-18S_CB3_17122024/02-output-dada2-pe-unfiltered/01-taxonomy-local-prey/taxonomy.tsv")
-Full_local_tax <- read_taxonomy("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S/tourmaline-18S_CB3_17122024/02-output-dada2-pe-unfiltered/01-taxonomy-local-full/taxonomy.tsv")
-universal_tax <- read_taxonomy("/home/erin/Projects/WDFW/SPSdiet/ComBay_run3_18S/tourmaline-18S_CB3_17122024/02-output-dada2-pe-unfiltered/01-taxonomy-universal/taxonomy.tsv")
+Prey_local_tax <- read_taxonomy(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","02-output-dada2-pe-unfiltered","01-taxonomy-local-prey","taxonomy.tsv"))
+Full_local_tax <- read_taxonomy(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","02-output-dada2-pe-unfiltered","01-taxonomy-full-local","taxonomy.tsv"))
+universal_tax <- read_taxonomy(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","02-output-dada2-pe-unfiltered","01-taxonomy-universal","taxonomy.tsv"))
 
 # Standardize column names for each input data frame
 prey_std <- standardize_taxonomy_cols(Prey_local_tax, "prey")

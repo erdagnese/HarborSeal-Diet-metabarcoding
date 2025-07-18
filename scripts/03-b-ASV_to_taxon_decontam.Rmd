@@ -19,16 +19,16 @@ library(rbiom)
 
 Bring in the ASV table to be decontaminated and the taxonomy table to be combined with it to combine into a taxon/OTU table 
 ```{r}
-asv <- read.biom(here("ComBay_run2_2024","tourmaline-18S_CB2_13122024","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+asv <- read.biom(here("data","CorrectionBias","tourmaline-18S_CB2_13122024","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
 # mifish
-asv <- read.biom(here("MarkerTest","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+asv <- read.biom(here("data","CorrectionBias","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
 
-tax <- read.csv(here("ComBay_run2_2024","ComBayRun2_18S_final_taxonomy_table.csv"), header = TRUE)
+tax <- read.csv(here("data","CorrectionBias","ComBayRun2_18S_final_taxonomy_table.csv"), header = TRUE)
 # for mifish
-tax <- read_tsv(here("MarkerTest","MiFish_final_Taxonomy.tsv"))
+tax <- read_tsv(here("data","MiFish_final_Taxonomy.tsv"))
 tax %>% rename(c(featureid = "Feature ID", final_taxonomy = Taxon)) -> tax
 
-metadata <- read.table(here("ComBay_run2_2024","tourmaline-18S_CB2_13122024","00-data","metadata.tsv"), sep = "\t", header = T)
+metadata <- read.table(here("data","tourmaline-18S_CB2_13122024","00-data","metadata.tsv"), sep = "\t", header = T)
 #MiFishMD <- read_tsv(here("PvDietMarkerTest","tourmaline-MiFish-20230130","00-data", "metadata.tsv"))
 ```
 

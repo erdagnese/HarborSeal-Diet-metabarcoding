@@ -1,0 +1,117 @@
+---
+title: "Seqs_for_18s_refDB"
+author: "Erin D'Agnese"
+date: "2025-07-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script is to pull the sequences from the tissue mixtures thathave known input of species that are missing from the 18S reference db
+1. Big skate - Raja binoculata
+2. ratfish - Hydrolagus colliei
+3. all the pandalid shrimp - Pandalus jordani (pink), Pandalus platyceros (spot prawn), Pandalus hypsinotus (coonstripe)
+4. the lamprey - Lampetra ayresii
+5. bay pipefish - Syngnathus leptorhynchus
+6. stubby squid - Rossia pacifica
+7. Longnose skate - Raja rhina
+8. spiny dog-fish - Squalus acanthias
+9. magister armhook squid - 
+10 - Vaq black-tiger shrimp
+11. bay shrimp
+12. Ghost shrimp
+13. red octopus
+14. GPO
+
+load the dataframes from the outputs of the 18S assignments
+```{r}
+library(here)
+
+metadata18S <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","00-data","metadata.tsv"), sep = "\t", header = T, check.names = F)
+
+local_prey <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","02-output-dada2-pe-unfiltered","01-taxonomy-local-prey", "asv_taxa_sample_table.tsv"), sep = "\t", header = T, check.names = F)
+
+full_local <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","02-output-dada2-pe-unfiltered","01-taxonomy-full-local", "asv_taxa_sample_table.tsv"), sep = "\t", header = T, check.names = F)
+
+universal <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","02-output-dada2-pe-unfiltered","01-taxonomy-universal", "asv_taxa_sample_table.tsv"), sep = "\t", header = T, check.names = F)
+
+species_list <- read.csv(here("input-files", "Species_list_extracts.csv"), header = T, check.names = F)
+metadata_run <- read.csv(here("input-files", "CorrectionBias_run_metadata.csv"), header = T, check.names = F)
+```
+
+
+```{r, include=FALSE}
+library(tidyverse)
+
+```
+
+Now we need to pull out the samples in the metadata that we want to pull the sequences from
+```{r}
+metadata18S %>% 
+  filter(region == "TissueMix") %>% 
+  filter(str_detect(Plate_ID, "Prey18S")) -> mixtures18S_md
+
+species_list %>% 
+  select(sp_abbrev, Species, Common_name) -> species_list
+
+```
+
+let's clean up the asv tables to make it easier to manage them
+```{r}
+# First, get the list of sample IDs from the metadata
+sample_ids <- mixtures18S_md$sampleid
+
+# Select columns from universal dataframe
+filtered_universal <- universal %>%
+  # Keep the first 4 columns
+  select(featureid, sequence, taxonomy, Confidence, 
+         # And any columns that match sample IDs in metadata
+         any_of(sample_ids))
+
+# Check the result
+head(filtered_universal)
+
+```
+
+```{r}
+# Select columns from universal dataframe
+filtered_full_local <- full_local %>%
+  # Keep the first 4 columns
+  select(featureid, sequence, taxonomy, Confidence, 
+         # And any columns that match sample IDs in metadata
+         any_of(sample_ids))
+
+# Check the result
+head(filtered_full_local)
+```
+
+```{r}
+# Select columns from universal dataframe
+filtered_local_prey <- local_prey %>%
+  # Keep the first 4 columns
+  select(featureid, sequence, taxonomy, Confidence, 
+         # And any columns that match sample IDs in metadata
+         any_of(sample_ids))
+
+# Check the result
+head(filtered_local_prey)
+```
+
+We need to make a map with the species names and abbreviation to be able to merge the sample data with the ASV data, but will need it in the future for tissue mixture analysis anyway, so let's make that and then save it into the input_files folder
+```{r}
+#first select only the mixtures from the metadata
+metadata_run %>% 
+  filter(region == "TissueMix") -> mixtures_all_md
+```
+
+Prepping the metadata
+```{r}
+
+mixtures_all_md %>% 
+  left_join(.,species_list, by = "sp_abbrev") -> mixtures_all_md
+
+```
+
+Now we need to pull out just the 18S ones and then we can select only the samples in the ASV to keep moving forward.
