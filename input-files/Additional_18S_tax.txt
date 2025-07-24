@@ -1,0 +1,25 @@
+"SynthGBlock18S"    "Eukaryota;Gblock_18S_FlameShell_wombat;;;;;FlameBat synthetic"
+"Rbinoculata.tm"    "Eukaryota;Chordata;Chondrichthyes;Rajiformes;Rajidae;Raja;Raja binoculata"
+"Dopalescens.tm"    "Eukaryota;Mollusca;Cephalopoda;Myopsida;Loliginidae;Doryteuthis;Doryteuthis opalescens"
+"Pmonodon.tm"   "Eukaryota;Arthropoda;Malacostraca;Decapoda;Penaeidae;Panaeus;Penaeus monodon"   
+"Crangonsp.tm"   "Eukaryota;Arthropoda;Malacostraca;Decapoda;Crangonidae;Crangon;Crangon spp."
+"Phypsinotus.tm"    "Eukaryota;Arthropoda;Malacostraca;Decapoda;Pandalidae;Pandalus;Pandalus hypsinotus"
+"Bmagister.tm"  "Eukaryota;Mollusca;Cephalopoda;Oegopsida;Gonatidae;Berryteuthis;Berryteuthis magister
+"Pjordani.tm"   "Eukaryota;Arthropoda;Malacostraca;Decapoda;Pandalidae;Pandalus;Pandalus jordani"
+"Orubescens.tm" "Eukaryota;Mollusca;Cephalopoda;Octopoda;Octopodidae;Octopus;Octopus rubescens"
+"Lfluviatilis.tm"   "Eukaryota;Chordata;Hyperoartia;Petromyzontiformes;Petromyzontidae;Lampetra;Lampetra fluviatilis"
+"Ssuckleyi.tm"  "Eukaryota;Chordata;Chondrichthyes;Squaliformes;Squalidae;Squalus;Squalus suckleyi"
+"Pplatyceros.tm"    "Eukaryota;Arthropoda;Malacostraca;Decapoda;Pandalidae;Pandalus;Pandalus platyceros"
+"DopalescensVAQ.tm" "Eukaryota;Mollusca;Cephalopoda;Myopsida;Loliginidae;Doryteuthis;Doryteuthis opalescens"
+"Rpacifica.tm"  "Eukaryota;Mollusca;Cephalopoda;Sepiida;Sepiolidae;Rossia;Rossia pacifica"
+"Edofleini.tm"  "Eukaryota;Mollusca;Cephalopoda;Octopoda;Enteroctopodidae;Enteroctopus;Enteroctopus dofleini"
+"Ncaliforniensis.tm"    "Eukaryota;Arthropoda;Malacostraca;Decapoda;Callianassidae;Neotrypaea;Neotrypaea californiensis"
+"Brhina.tm" "Eukaryota;Chordata;Chondrichthyes;Rajiformes;Rajidae;Beringraja;Beringraja rhina"
+
+
+
+
+
+
+
+
