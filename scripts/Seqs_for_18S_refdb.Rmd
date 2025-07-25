@@ -112,6 +112,9 @@ Prepping the metadata
 mixtures_all_md %>% 
   left_join(.,species_list, by = "sp_abbrev") -> mixtures_all_md
 
+mixtures_all_md %>% 
+  filter(str_detect(Plate_ID, "Prey18S")) -> mixtures18S_md
+
 ```
 
 

@@ -125,36 +125,6 @@ combined_results <- combine_taxonomies(prey_std, full_std, universal_std)
 Now we can start determining final taxonomy based on a decision tree
 
 
-Rule 1: All Three Taxonomies Match Exactly:
-
-    If prey_taxonomy, full_taxonomy, and universal_taxonomy are identical, the final_taxonomy is set to lca_all. This ensures that the LCA is used when all three taxonomies agree.
-
-Rule 2: lca_all_rank is "genus" or "family":
-
-    If the LCA between all three taxonomies is at the genus or family level, the final_taxonomy is set to the full_taxonomy.
-
-Rule 3: lca_all_rank is "order" or "class":
-
-    If the LCA between all three taxonomies is at the order or class level, and the LCA between full_taxonomy and prey_taxonomy is at the species, genus, or family level, the final_taxonomy is set to:
-        full_taxonomy if the highest_confidence is full_confidence.
-        lca_full_prey taxonomy if the highest_confidence is prey_confidence.
-
-Rule 4: universal and full local taxonomies match
-    
-    If the universal and full_local taxonomies match and aren't at kingdom level, then we will take the lca_uni_full as the final_taxonomy
-Rule 5: lca_all_rank and lca_full_prey_rank is "kingdom"
-
-    If the LCA between all three and the LCA between prey and full local are at the kingdom level, but the lca_uni_full is not kingdom the final_taxonomy is set to:
-        full_taxonomy if the full_confidence > universal_confidence.
-        lca_uni_full if the full_confidence < universal_confidence
-
-Rule 6: if prey_rank and full_rank are "kingdom" and the universal isn't take the universal 
-
-Rule 7: if lca_uni_full and lca_uni_prey match and lca_full_prey_rank is species or genus take the lca_full_prey
-        
-Rule 8: lca_all, lca_uni_full, lca_full_prey, lca_uni_prey all match
-    
-    If all the LCA match between all the different comparisons, take that as the final_taxonomy
         
 ```{r}
 source("Function_final_taxonomy_decision_tree.R")
@@ -181,7 +151,131 @@ Okay now we can pull the final taxonomy, with the featureid to merge with the AS
 final_results %>% 
   dplyr::select(featureid, final_taxonomy) -> final_tax_table
 
-write.csv(final_tax_table, "ComBayRun3_18S_final_taxonomy_table.csv", row.names = F)
+# Function to save taxonomy table with custom descriptor
+save_taxonomy_table <- function(final_tax_table, 
+                                descriptor = "", 
+                                subfolder = "taxonomy_assignments") {
+  
+  # Create timestamp
+  timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+  
+  # Build filename components
+  base_name <- "final_taxonomy"
+  descriptor <- ifelse(descriptor == "", "", paste0("_", descriptor))
+  
+  # Construct full path
+  output_path <- here("intermediate-files", subfolder,
+                     paste0(base_name, descriptor, "_", timestamp, ".csv"))
+  
+  # Create directory if needed
+  if(!dir.exists(dirname(output_path))) {
+    dir.create(dirname(output_path), recursive = TRUE)
+  }
+  
+  # Write the file
+  write.csv(
+    final_tax_table,
+    file = output_path,
+    row.names = FALSE,
+    )
+  
+  # Return confirmation
+  return(list(
+    path = output_path,
+    message = paste("Taxonomy table saved to:\n", output_path)
+  ))
+}
+
+### Usage Examples:
+# 1. Basic save (just timestamp)
+# save_taxonomy_table(final_tax_table)
+
+# 2. With project descriptor
+# save_taxonomy_table(final_tax_table, descriptor = "mammal_diet")
+
+# 3. Custom subfolder
+# save_taxonomy_table(final_tax_table, 
+#                    descriptor = "marine_fish",
+#                    subfolder = "marine_assignments")
+
+# 4. Get path information
+# result <- save_taxonomy_table(final_tax_table, "alpine_species")
+# cat(result$message)
+# file.show(result$path)
+
+# For a specific project
+save_taxonomy_table(
+  final_tax_table = final_tax_table,
+  descriptor = "CorrectionBias", 
+  subfolder = "CorrectionBiasRun"
+)
+
+
 ```
 
+The decision tree logic is as follows:
 
+# Taxonomy Assignment Decision Tree
+
+## Rule Explanations
+# Taxonomy Decision Tree - Complete Rules
+
+### Rule 1: All Three Taxonomies Match Exactly
+Logic: If prey_taxonomy == full_taxonomy == universal_taxonomy, use lca_all.
+
+### Rule 2: LCA at Genus/Family Level
+Logic: If lca_all_rank is "genus" or "family", use full_taxonomy.
+
+### Rule 3: Universal and Full Local Match
+Logic: If full_taxonomy == universal_taxonomy and lca_uni_full_rank != "kingdom", use lca_uni_full.
+
+### Rule 4: Order/Class with Confidence Checks
+Logic: If lca_all_rank is "order" or "class":
+- If prey == full: Use universal_taxonomy if highest_confidence is universal, else lca_full_prey
+- Else if lca_full_prey_rank is "species" or "genus": Use full_taxonomy if highest_confidence is full, else lca_full_prey
+
+### Rule 5: Kingdom-Level with Universal Available
+Logic: If lca_uni_prey_rank and lca_full_prey_rank are "kingdom" but lca_uni_full_rank isn't:
+- Use universal_taxonomy if universal_confidence > 0.99
+- Else use lca_uni_full
+
+### Rule 6: Prey/Full at Kingdom but Universal Better
+Logic: If prey_rank and full_rank are "kingdom" and universal_rank isn't, use universal_taxonomy.
+
+### Rule 7: Full Confidence Highest (Not Kingdom)
+Logic: If highest_confidence is "full_confidence" and full_rank != "kingdom":
+- If universal_confidence < 0.99: Use full_taxonomy
+- Else use best available LCA considering universal and full
+
+### Rule 8: Full Confidence at Kingdom Level
+Logic: If highest_confidence is "full_confidence" and full_rank == "kingdom":
+- Use universal_taxonomy if universal_rank != "kingdom"
+- Else use lca_uni_full
+
+### Rule 9: Prey Confidence Highest
+Logic: If highest_confidence is "prey_confidence":
+- If prey_rank == "kingdom": Use best non-kingdom LCA
+- Else: Use confidence-based resolution between prey and full
+
+### Rule 10: Universal Confidence Highest
+Logic: If highest_confidence is "universal_confidence" and universal_rank != "kingdom":
+- If confidence < 0.9: Use most specific non-kingdom LCA (lca_all, lca_uni_full, or lca_uni_prey)
+- Else if universal_rank == "species": Keep universal_taxonomy
+- Else: Use most specific non-kingdom LCA
+
+### Rule 11: Universal at Kingdom Level
+Logic: If universal_rank == "kingdom":
+- Use lca_full_prey if not kingdom
+- Else if full_confidence > prey_confidence: Use full_taxonomy
+- Else: Use lca_all
+
+### Rule 12: All LCAs at Kingdom Level
+Logic: If lca_all_rank == "kingdom":
+- Select among lca_uni_full, lca_uni_prey, lca_all
+- Choose most specific rank, resolve ties by matching taxonomies
+
+### Rule 13: Final Fallback
+Logic: If final_taxonomy still NA, use lca_all.
+
+### Rule Order:
+1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13

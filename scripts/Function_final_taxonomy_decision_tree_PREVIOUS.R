@@ -36,10 +36,7 @@ decision_tree <- function(combined_df) {
       final_taxonomy = NA_character_,
       rule_applied = NA_character_,
       
-      # -------------------------------------------------------------------------
-      # Rule 1: Highest Priority - Exact match across all taxonomies
-      # -------------------------------------------------------------------------
-      # If all three taxonomies match exactly, use lca_all
+      # Rule 1: If all three taxonomies match exactly, use lca_all
       final_taxonomy = if_else(
         is.na(final_taxonomy) & prey_taxonomy == full_taxonomy & prey_taxonomy == universal_taxonomy,
         lca_all,
@@ -47,14 +44,11 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & prey_taxonomy == full_taxonomy & prey_taxonomy == universal_taxonomy,
-        "Rule 01: All taxonomies match exactly",
+        "Rule 1",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 2: High confidence at genus/family level
-      # -------------------------------------------------------------------------
-      # If LCA between all three is at genus or family level, use full_taxonomy
+      # Rule 2: If lca_all_rank is genus or family, use the full_local_taxonomy
       final_taxonomy = if_else(
         is.na(final_taxonomy) & lca_all_rank %in% c("genus", "family"),
         full_taxonomy,
@@ -62,14 +56,11 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & lca_all_rank %in% c("genus", "family"),
-        "Rule 02: LCA at genus/family level",
+        "Rule 2",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 3: Matching universal and full local taxonomies
-      # -------------------------------------------------------------------------
-      # If universal and full local match (and not at kingdom level), use lca_uni_full
+      # Rule 3: if universal and full local match use the lca_uni_full
       final_taxonomy = if_else(
         is.na(final_taxonomy) & full_taxonomy == universal_taxonomy & lca_uni_full_rank != "kingdom",
         lca_uni_full,
@@ -77,13 +68,11 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & full_taxonomy == universal_taxonomy & lca_uni_full_rank != "kingdom",
-        "Rule 03: Universal and full local match",
+        "Rule 3",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 4: Order/Class with Confidence Checks (Marker-Agnostic Version)
-      # -------------------------------------------------------------------------
+      # Rule 4: If lca_all_rank is order or class
       final_taxonomy = if_else(
         is.na(final_taxonomy) & lca_all_rank %in% c("order", "class"),
         case_when(
@@ -100,14 +89,11 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & lca_all_rank %in% c("order", "class"),
-        "Rule 4: Order/class with confidence checks",
+        "Rule 4",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 5: Kingdom-level handling when universal is available
-      # -------------------------------------------------------------------------
-      # When LCAs are at kingdom but lca_uni_full isn't, use confidence-based decision
+      # Rule 5: lca_all_rank and lca_full_prey_rank is "kingdom", but lca_uni_full isn't
       final_taxonomy = if_else(
         is.na(final_taxonomy) & lca_uni_prey_rank == "kingdom" & lca_full_prey_rank == "kingdom" & lca_uni_full_rank %in% c("species","genus","family","order", "class", "phylum"),
         case_when(
@@ -118,14 +104,11 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & lca_uni_prey_rank == "kingdom" & lca_full_prey_rank == "kingdom" & lca_uni_full_rank %in% c("species","genus","family","order", "class", "phylum"),
-        "Rule 05: Kingdom-level with universal available",
+        "Rule 5",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 6: Prey and full at kingdom but universal is better
-      # -------------------------------------------------------------------------
-      # If prey and full are at kingdom but universal isn't, take universal
+      # Rule 6: if prey_rank and full_rank are "kingdom" and the universal isn't take the universal
       final_taxonomy = if_else(
         is.na(final_taxonomy) & prey_rank == "kingdom" & full_local_rank == "kingdom" & universal_rank != "kingdom",
         universal_taxonomy,
@@ -133,18 +116,16 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & prey_rank == "kingdom" & full_local_rank == "kingdom" & universal_rank != "kingdom",
-        "Rule 06: Prey/full kingdom but universal better",
+        "Rule 6",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 7: Full confidence highest and not at kingdom level
-      # -------------------------------------------------------------------------
-      # Complex rule for when full_confidence is highest and not at kingdom level
+      # Rule 7: if local_full_confidence is the highest confidence and not at kingdom level
       final_taxonomy = if_else(
         is.na(final_taxonomy) & highest_confidence == "full_confidence" & full_local_rank != "kingdom",
         case_when(
           lca_all_rank != "kingdom" & universal_confidence < 0.99 ~ full_taxonomy,
+          lca_full_prey_rank == "species" & full_confidence >= 0.99 ~ lca_full_prey,
           universal_rank %in% c("phylum","kingdom") ~ full_taxonomy,
           lca_uni_full_rank %in% c("class","order","family","genus","species") ~ lca_uni_full,
           lca_uni_full_rank %in% c("phylum","kingdom") & universal_rank %in% c("class","order","family","genus","species") & universal_confidence >= 0.99 ~ universal_taxonomy,
@@ -156,14 +137,11 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & highest_confidence == "full_confidence" & full_local_rank != "kingdom",
-        "Rule 07: Full confidence highest (not kingdom)",
+        "Rule 7",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 8: Full confidence highest but only at kingdom level
-      # -------------------------------------------------------------------------
-      # When full_confidence is highest but only at kingdom level
+      # Rule 8: full_confidence is highest but it's only at kingdom level
       final_taxonomy = if_else(
         is.na(final_taxonomy) & highest_confidence == "full_confidence" & full_local_rank == "kingdom",
         case_when(
@@ -174,14 +152,11 @@ decision_tree <- function(combined_df) {
       ),
       rule_applied = if_else(
         is.na(rule_applied) & highest_confidence == "full_confidence" & full_local_rank == "kingdom",
-        "Rule 08: Full confidence highest (kingdom only)",
+        "Rule 8",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 9: Prey confidence highest (kingdom and non-kingdom cases)
-      # -------------------------------------------------------------------------
-      # Complex rule for when prey_confidence is highest
+      # Rule 9: prey confidence is highest but only at kingdom level
       final_taxonomy = if_else(
         is.na(final_taxonomy) & highest_confidence == "prey_confidence",
         case_when(
@@ -206,85 +181,32 @@ decision_tree <- function(combined_df) {
              prey_rank != "kingdom" & lca_all_rank != "kingdom" & prey_taxonomy == full_taxonomy & full_confidence > universal_confidence |
              prey_rank != "kingdom" & lca_all_rank != "kingdom" & prey_taxonomy != full_taxonomy & full_confidence > universal_confidence |
              prey_rank != "kingdom" & lca_all_rank != "kingdom" & prey_taxonomy == full_taxonomy & full_confidence < universal_confidence),
-        "Rule 09: Prey confidence highest",
+        "Rule 9",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 10: Universal confidence is highest (non-kingdom only)
-      # -------------------------------------------------------------------------
+      # Rule 10: universal confidence is the highest 
       final_taxonomy = if_else(
-        is.na(final_taxonomy) & 
-          highest_confidence == "universal_confidence" & 
-          universal_rank != "kingdom",
-        {
-          # Case 1: Low confidence universal (<0.9) - use most specific LCA
-          if (universal_confidence < 0.9) {
-            lca_options <- list(
-              lca_all = list(rank = lca_all_rank, taxonomy = lca_all),
-              lca_uni_full = list(rank = lca_uni_full_rank, taxonomy = lca_uni_full),
-              lca_uni_prey = list(rank = lca_uni_prey_rank, taxonomy = lca_uni_prey)
-            ) %>%
-              keep(~ .x$rank != "kingdom")
-            
-            if (length(lca_options) > 0) {
-              lowest_rank_index <- find_lowest_rank_index(
-                map_chr(lca_options, "rank"),
-                rank_order
-              )
-              lca_options[[lowest_rank_index]]$taxonomy
-            } else {
-              NA_character_  # Let other rules handle
-            }
-          }
-          # Case 2: High confidence universal (≥0.9)
-          else {
-            # Get all non-kingdom universal-inclusive LCAs
-            lca_options <- list(
-              lca_all = list(rank = lca_all_rank, taxonomy = lca_all),
-              lca_uni_full = list(rank = lca_uni_full_rank, taxonomy = lca_uni_full),
-              lca_uni_prey = list(rank = lca_uni_prey_rank, taxonomy = lca_uni_prey)
-            ) %>%
-              keep(~ .x$rank != "kingdom")
-            
-            # Prefer universal if it's at species level
-            if (universal_rank == "species") {
-              universal_taxonomy
-            } 
-            # Otherwise take most specific LCA if available
-            else if (length(lca_options) > 0) {
-              lowest_rank_index <- find_lowest_rank_index(
-                map_chr(lca_options, "rank"),
-                rank_order
-              )
-              lca_options[[lowest_rank_index]]$taxonomy
-            } 
-            # Fallback to universal if no better LCAs
-            else {
-              universal_taxonomy
-            }
-          }
-        },
+        is.na(final_taxonomy) & highest_confidence == "universal_confidence",
+        case_when(
+          universal_rank == "species" & full_local_rank %in% c("phylum", "kingdom", "class", "order", "family", "genus") ~ universal_taxonomy,
+          universal_rank != "kingdom" & lca_uni_full_rank == "kingdom" & lca_full_prey_rank == "kingdom" ~ universal_taxonomy,
+          universal_rank != "kingdom" & lca_uni_full_rank != "kingdom" & lca_full_prey_rank != "kingdom" & lca_uni_prey_rank != "kingdom" ~ lca_uni_prey,
+          find_lowest_rank_index(c(universal_rank, full_local_rank, prey_rank), rank_order) == 1 ~ universal_taxonomy
+        ),
         final_taxonomy
       ),
       rule_applied = if_else(
-        is.na(rule_applied) & 
-          highest_confidence == "universal_confidence" & 
-          universal_rank != "kingdom",
-        if (universal_confidence < 0.9) {
-          "Rule 10: Low confidence - used LCA"
-        } else if (universal_rank == "species") {
-          "Rule 10: High confidence species"
-        } else {
-          "Rule 10: High confidence - selected LCA"
-        },
+        is.na(rule_applied) & highest_confidence == "universal_confidence" & 
+          (universal_rank == "species" & full_local_rank %in% c("phylum", "kingdom", "class", "order", "family", "genus") |
+             universal_rank != "kingdom" & lca_uni_full_rank == "kingdom" & lca_full_prey_rank == "kingdom" |
+             universal_rank != "kingdom" & lca_uni_full_rank != "kingdom" & lca_full_prey_rank != "kingdom" & lca_uni_prey_rank != "kingdom" |
+             find_lowest_rank_index(c(universal_rank, full_local_rank, prey_rank), rank_order) == 1),
+        "Rule 10",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 11: Universal rank is kingdom
-      # -------------------------------------------------------------------------
-      # When universal taxonomy is only at kingdom level
+      # Rule 11: universal rank is kingdom
       final_taxonomy = if_else(
         is.na(final_taxonomy) & universal_rank == "kingdom", 
         case_when(
@@ -299,48 +221,38 @@ decision_tree <- function(combined_df) {
           (lca_full_prey_rank == "kingdom" |  
              lca_full_prey_rank == "kingdom" & full_confidence > prey_confidence |
              lca_full_prey_rank == "kingdom" & prey_confidence > full_confidence),
-        "Rule 11: Universal at kingdom level",
+        "Rule 11",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 12: Compare ranks when all LCAs are at kingdom level
-      # -------------------------------------------------------------------------
-      # Modified to prioritize lca_full_prey when it's at higher rank and either 
-      # prey or full confidence is highest
+      # Rule 12: Compare ranks of lca_uni_full, lca_uni_prey, and lca_all, at this point we don't want to weight the prey at over universal
       final_taxonomy = if_else(
         is.na(final_taxonomy) & 
           lca_all_rank == "kingdom",
         {
-          # First check if lca_full_prey is better than kingdom and confidence is highest
-          if (lca_full_prey_rank != "kingdom" && 
-              highest_confidence %in% c("prey_confidence", "full_confidence")) {
-            lca_full_prey
+          # Create vectors of ranks and corresponding taxonomies
+          ranks <- c(lca_uni_full_rank, lca_uni_prey_rank, lca_all_rank)
+          taxonomies <- c(lca_uni_full, lca_uni_prey, lca_all)
+          
+          # Find the index of the lowest rank
+          lowest_index <- find_lowest_rank_index(ranks, rank_order)
+          
+          # Check if there are ties (multiple ranks with the same lowest rank)
+          lowest_rank <- ranks[lowest_index]
+          tied_indices <- which(ranks == lowest_rank)
+          
+          if (length(tied_indices) == 1) {
+            # No ties: Return the taxonomy corresponding to the lowest rank
+            taxonomies[lowest_index]
           } else {
-            # Original logic for other cases
-            ranks <- c(lca_uni_full_rank, lca_uni_prey_rank, lca_all_rank)
-            taxonomies <- c(lca_uni_full, lca_uni_prey, lca_all)
-            
-            # Find the index of the lowest rank
-            lowest_index <- find_lowest_rank_index(ranks, rank_order)
-            
-            # Check if there are ties (multiple ranks with the same lowest rank)
-            lowest_rank <- ranks[lowest_index]
-            tied_indices <- which(ranks == lowest_rank)
-            
-            if (length(tied_indices) == 1) {
-              # No ties: Return the taxonomy corresponding to the lowest rank
-              taxonomies[lowest_index]
+            # Ties: Check if the taxonomies match
+            tied_taxonomies <- taxonomies[tied_indices]
+            if (length(unique(tied_taxonomies)) == 1) {
+              # Taxonomies match: Return the first tied taxonomy
+              tied_taxonomies[1]
             } else {
-              # Ties: Check if the taxonomies match
-              tied_taxonomies <- taxonomies[tied_indices]
-              if (length(unique(tied_taxonomies)) == 1) {
-                # Taxonomies match: Return the first tied taxonomy
-                tied_taxonomies[1]
-              } else {
-                # Taxonomies don't match: Leave as NA
-                NA_character_
-              }
+              # Taxonomies don't match: Leave as NA
+              NA_character_
             }
           }
         },
@@ -349,27 +261,19 @@ decision_tree <- function(combined_df) {
       rule_applied = if_else(
         is.na(rule_applied) & 
           lca_all_rank == "kingdom",
-        if_else(
-          lca_full_prey_rank != "kingdom" && 
-            highest_confidence %in% c("prey_confidence", "full_confidence"),
-          "Rule 12: High confidence with lca_full_prey above kingdom",
-          "Rule 12: All LCAs at kingdom level"
-        ),
+        "Rule 12",
         rule_applied
       ),
       
-      # -------------------------------------------------------------------------
-      # Rule 13: Final fallback - Use lca_all if still NA
-      # -------------------------------------------------------------------------
-      # If no other rules applied and final_taxonomy is still NA, use lca_all
+      # Default: Leave as NA for now
       final_taxonomy = if_else(
         is.na(final_taxonomy),
-        lca_all,
+        NA_character_,
         final_taxonomy
       ),
       rule_applied = if_else(
         is.na(rule_applied),
-        "Rule 13: Fallback to LCA of all",
+        "No rule applied",
         rule_applied
       )
     ) %>%

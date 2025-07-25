@@ -130,7 +130,7 @@ combine_taxonomies <- function(prey_df, full_df, universal_df) {
       
       # Highest confidence and its rank
       highest_confidence = case_when(
-        prey_confidence >= full_confidence & prey_confidence >= universal_confidence ~ "prey_confidence",
+        prey_confidence > full_confidence & prey_confidence >= universal_confidence ~ "prey_confidence",
         full_confidence >= prey_confidence & full_confidence >= universal_confidence ~ "full_confidence",
         universal_confidence >= prey_confidence & universal_confidence >= full_confidence ~ "universal_confidence"
       ),
