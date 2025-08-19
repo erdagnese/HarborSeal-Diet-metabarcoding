@@ -19,16 +19,15 @@ library(rbiom)
 
 Bring in the ASV table to be decontaminated and the taxonomy table to be combined with it to combine into a taxon/OTU table 
 ```{r}
-asv <- read.biom(here("data","CorrectionBias","tourmaline-18S_CB2_13122024","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
-# mifish
-asv <- read.biom(here("data","CorrectionBias","tourmaline-MiFish-20230130","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
+asv <- read_biom(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE)
 
-tax <- read.csv(here("data","CorrectionBias","ComBayRun2_18S_final_taxonomy_table.csv"), header = TRUE)
+tax <- read.csv(here("intermediate-files","CorrectionBiasRun","final_taxonomy_CorrectionBias_20250724_183741.csv"), header = TRUE)
+
 # for mifish
 tax <- read_tsv(here("data","MiFish_final_Taxonomy.tsv"))
 tax %>% rename(c(featureid = "Feature ID", final_taxonomy = Taxon)) -> tax
 
-metadata <- read.table(here("data","tourmaline-18S_CB2_13122024","00-data","metadata.tsv"), sep = "\t", header = T)
+metadata <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","00-data","metadata.tsv"), sep = "\t", header = T)
 #MiFishMD <- read_tsv(here("PvDietMarkerTest","tourmaline-MiFish-20230130","00-data", "metadata.tsv"))
 ```
 
@@ -44,7 +43,8 @@ determine which ASVs from the positive control are in other the samples due to t
 ```{r}
 source("Function_decontam_ASV.R")
 #for 18S the initial ones used kangaroo which only gets to mammal assignment so we are going to have to be creative, for ASVs that have few reads in anything other than the pos control
-posCtrlasv <- posctrl_decontam_data(asv, c("Kang_HS_05", "Kang_HS_06", "Kang_SPID-0185", "Kang_SPID-0186"))
+#usage is the asv then the samples that are the positive control samples
+posCtrlasv <- posctrl_decontam_data(asv, c("PosCtrl_1", "PosCtrl_2", "Plate3_E3"))
 # look at the sum reads and max reads to determine if the positive control specific ASVs that aren't abundant due to the kangaroo/mammal resolution issue, if there are no reads in other samples, we can assume that tag jumping is negligible
 ```
 
@@ -79,7 +79,43 @@ taxon_table_wide <- taxon_table_summarized %>%
 # View the result
 print(taxon_table_wide)
 
-#write.csv(taxon_table_wide, "Test_18S_taxon_decontam_table.csv", row.names = F)
+write.csv(taxon_table_wide, file = here::here("intermediate-files", "CorBias_18S_taxon_decontam_asv_table.csv") , row.names = F)
 #write.csv(taxon_table_wide, "Test_MiFish_taxon_decontam_table.csv", row.names = F)
 ```
 
+okay we need to try to solve the ratfish issue... let's find all the ASVs that only occur in the Ratfish TMs and the mock communities
+```{r}
+# Assuming your data is in a dataframe called 'asv_tax'
+# First, let's define the samples you want to isolate
+target_samples <- c("TM_E7", "TM_F7", "TM_G7", "MC_F3","MC_G3", "MC_H3", "MC_A4","MC_B4", "MC_C4", "MC_D4", "MC_E4","MC_F4","Plate3_G4","Plate3_H4","Plate3_A5","Plate3_B5", "Plate3_C5","Plate3_D5", "Plate3_E5","Plate3_F5","Plate3_G5") # Replace with your actual samples
+
+# Get all other samples (non-target samples)
+all_samples <- colnames(asv_tax)[3:ncol(asv_tax)] # Skip first two columns (featureid and taxonomy)
+other_samples <- setdiff(all_samples, target_samples)
+
+# Function to check if an ASV is present only in target samples
+is_only_in_target <- function(row) {
+  # Check if ASV is present in any target sample
+  in_target <- any(row[target_samples] > 0)
+  
+  # Check if ASV is absent from all other samples
+  in_others <- any(row[other_samples] > 0)
+  
+  return(in_target & !in_others)
+}
+
+# Apply the function to each row
+only_in_target <- apply(asv_tax[, 3:ncol(asv_tax)], 1, is_only_in_target)
+
+# Filter the ASVs that meet our criteria
+unique_asvs <- asv_tax[only_in_target, ]
+
+# Get the counts for these ASVs in the target samples
+result <- unique_asvs[, c("featureid", "final_taxonomy", target_samples)]
+
+# Print the results
+print(result)
+
+asv_tax 
+```
+There isn't a good enough sequence we can take for the ratfish in the 18S TM data to add to the ref db to be able to classify it. Until we can sanger the 18S gene we will have to throw it out of the mocks and TMs since it isn't even classifying to chondrichthyes. 

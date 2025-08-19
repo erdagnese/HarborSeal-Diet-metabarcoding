@@ -1,0 +1,37 @@
+Species,18S_taxon_assign,Sample_ID,Community,start_conc_ng_ul,Even_prop,Even_mass_ng,Even_vol_sample,Even_calc_conc,SK1_prop,SK1_mass_ng,SK1_vol,SK1_calc_conc,SK2_prop,SK2_mass_ng,SK2_vol,SK2_calc_conc
+Clupea pallasii,Actinopteri,14_PacHer,MC_18S_RepFish,3.23,0.053,5,1.55,0.04186029296,0.1,10,3.1,0.1239748968,0.064,6.4,1.98,0.09672066728
+Merluccius productus,Actinopteri,01_Hake,MC_18S_RepFish,4.76,0.053,5,1.05,0.04186029296,0.1,10,2.1,0.1239748968,0.064,6.4,1.34,0.09672066728
+Oncorhynchus keta,Actinopteri,01_ChumSal_dil,MC_18S_RepFish,1.69,0.053,5,2.96,0.04186029296,0.1,10,5.92,0.1239748968,0.1,10,5.92,0.1511260426
+Actinopteri,Actinopteri,Comb_Fish,MC_18S_CombFish,2.77,0.059,5,1.81,0.04242370735,0.125,12.5,4.51,0.1413217409,0.125,12.5,2.5,0.1597893022
+Hydrolagus colliei,Chimaeridae,02_Ratfish,MC_18S_RepFish,1.71,0.053,5,2.92,0.04186029296,0.064,6.4,3.74,0.07934393396,0.1,10,5.85,0.1511260426
+Hydrolagus colliei,Chimaeridae,02_Ratfish,MC_18S_CombFish,1.71,0.059,5,2.92,0.04242370735,0.08,8,4.68,0.09044591419,0.125,12.5,7.31,0.1597893022
+Crangon spp.,Crangon,01_BatShr,MC_18S_RepFish,2.16,0.053,5,2.31,0.04186029296,0.03,3,1.39,0.03719246904,0.064,6.4,2.96,0.09672066728
+Crangon spp.,Crangon,01_BatShr,MC_18S_CombFish,2.16,0.059,5,2.31,0.04242370735,0.03,3,1.39,0.03391721782,0.08,8,3.7,0.1022651534
+Entosphenus tridentatus (Lampetra genus),Lampetra fluviatilis,01_PacLamp_B,MC_18S_RepFish,2.04,0.053,5,2.45,0.04186029296,,,,0,0.03,3,1.47,0.04533781279
+Entosphenus tridentatus (Lampetra genus),Lampetra fluviatilis,01_PacLamp_B,MC_18S_CombFish,2.04,0.059,5,2.45,0.04242370735,,,,0,0.08,8,3.92,0.1022651534
+Phoca vitulina,Mammalia,HarSeal_dil,MC_18S_RepFish,4.81,0.053,5,1.04,0.04186029296,0.1,10,2.08,0.1239748968,0.064,6.4,1.33,0.09672066728
+Mammalia,Mammalia,Comb_mam,MC_18S_CombFish,1.56,0.059,5,3.21,0.04242370735,0.125,12.5,8.01,0.1413217409,0.03,3,1.92,0.03834943253
+Doryteuthis opalescens,Loliginidae,03_MkSq,MC_18S_RepFish,1.58,0.053,5,3.16,0.04186029296,0.064,6.4,4.05,0.07934393396,0.1,10,6.33,0.1511260426
+Doryteuthis opalescens,Loliginidae,03_MkSq,MC_18S_CombFish,1.58,0.059,5,3.16,0.04242370735,0.125,12.5,7.91,0.1413217409,0.08,8,5.06,0.1022651534
+Neotrypaea californiensis,Neotrypaea,01_GhShr,MC_18S_RepFish,1.81,0.053,5,2.76,0.04186029296,0.064,6.4,3.54,0.07934393396,0.064,6.4,3.54,0.09672066728
+Neotrypaea californiensis,Neotrypaea,01_GhShr,MC_18S_CombFish,1.81,0.059,5,2.76,0.04242370735,0.08,8,4.42,0.09044591419,0.03,3,1.66,0.03834943253
+Nereis vexillosa,Nereididae,01_MusPolyWorm,MC_18S_RepFish,2.63,0.053,5,1.9,0.04186029296,0.03,3,1.14,0.03719246904,0.03,3,1.14,0.04533781279
+Nereis vexillosa,Nereididae,01_MusPolyWorm,MC_18S_CombFish,2.63,0.059,5,1.9,0.04242370735,0.03,3,1.14,0.03391721782,0.08,8,3.04,0.1022651534
+Enteroctopus dofleini,Octopus,02_GPO_01,MC_18S_RepFish,0.411,0.053,5,12.17,0.04186029296,0.03,3,7.3,0.03719246904,0.03,3,7.3,0.04533781279
+Octopus rubescens,Octopus,01_RedOcto_06,MC_18S_RepFish,0.662,0.053,5,7.55,0.04186029296,0.03,3,4.53,0.03719246904,,,,0
+Rossia pacifica,Octopus,01_StubSquid,MC_18S_RepFish,0.133,0.053,5,37.59,0.04186029296,0.03,3,22.56,0.03719246904,,,,0
+Enteroctopus dofleini,Octopus,02_GPO_01,MC_18S_CombFish,0.411,0.059,5,12.17,0.04242370735,0.03,3,7.3,0.03391721782,,,,0
+Octopus rubescens,Octopus,01_RedOcto_06,MC_18S_CombFish,0.662,0.059,5,7.55,0.04242370735,0.03,3,4.53,0.03391721782,0.03,3,4.53,0.03834943253
+Rossia pacifica,Octopus,01_StubSquid,MC_18S_CombFish,0.133,0.059,5,37.59,0.04242370735,,,,0,0.03,3,22.56,0.03834943253
+Berryteuthis magister,Oegopsida,03_MgArmSq,MC_18S_RepFish,0.317,0.053,5,15.77,0.04186029296,,,,0,0.03,3,9.46,0.04533781279
+Berryteuthis magister,Oegopsida,03_MgArmSq,MC_18S_CombFish,0.317,0.059,5,15.77,0.04242370735,0.08,8,25.24,0.09044591419,,,,0
+Pandalus platyceros,Pandalus,SpotPrawn_01,MC_18S_RepFish,1.25,0.053,5,4,0.04186029296,0.064,6.4,5.12,0.07934393396,0.03,3,2.4,0.04533781279
+Pandalus jordani,Pandalus,03_PnkShr,MC_18S_RepFish,0.603,0.053,5,8.29,0.04186029296,0.03,3,4.98,0.03719246904,,,,0
+Pandalus hypsinotus,Pandalus,01_CoonStShr,MC_18S_RepFish,0.799,0.053,5,6.26,0.04186029296,,,,0,0.03,3,3.75,0.04533781279
+Pandalus platyceros,Pandalus,SpotPrawn_01,MC_18S_CombFish,1.25,0.059,5,4,0.04242370735,0.03,3,2.4,0.03391721782,0.125,12.5,10,0.1597893022
+Pandalus jordani,Pandalus,03_PnkShr,MC_18S_CombFish,0.603,0.059,5,8.29,0.04242370735,0.03,3,4.98,0.03391721782,,,,0
+Pandalus hypsinotus,Pandalus,01_CoonStShr,MC_18S_CombFish,0.799,0.059,5,6.26,0.04242370735,,,,0,0.03,3,3.75,0.03834943253
+Raja binoculata,Rajidae,01_Bskate_B,MC_18S_RepFish,1.96,0.053,5,2.55,0.04186029296,0.1,10,5.1,0.1239748968,0.1,10,5.1,0.1511260426
+Raja binoculata,Rajidae,01_Bskate_B,MC_18S_CombFish,1.96,0.059,5,2.55,0.04242370735,0.08,8,4.08,0.09044591419,0.125,12.5,6.38,0.1597893022
+Squalus suckleyi,Squalus suckleyi,01_SpDog,MC_18S_RepFish,1.59,0.053,5,3.14,0.04186029296,0.064,6.4,4.03,0.07934393396,0.1,10,6.29,0.1511260426
+Squalus suckleyi,Squalus suckleyi,01_SpDog,MC_18S_CombFish,1.59,0.059,5,3.14,0.04242370735,0.125,12.5,7.86,0.1413217409,0.03,3,1.89,0.03834943253

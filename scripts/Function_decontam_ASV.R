@@ -58,6 +58,14 @@ resolution_18S_tax <- function(tax) {
     mutate(final_taxonomy = case_when(
       str_starts(final_taxonomy, "Eukaryota;Chordata;Mammalia") ~ "Eukaryota;Chordata;Mammalia",
       str_starts(final_taxonomy, "Eukaryota;Chordata;Actinopteri") ~ "Eukaryota;Chordata;Actinopteri",
+      str_starts(final_taxonomy, "Eukaryota;Mollusca;Cephalopoda;Myopsida;Loliginidae") ~ "Eukaryota;Mollusca;Cephalopoda;Myopsida;Loliginidae",
+      str_starts(final_taxonomy, "Eukaryota;Mollusca;Cephalopoda;Myopsida;Loliginidae") ~ "Eukaryota;Mollusca;Cephalopoda;Myopsida;Loliginidae",
+      str_starts(final_taxonomy, "Eukaryota;Mollusca;Cephalopoda;Octopoda;Octopodidae;Octopus") ~ "Eukaryota;Mollusca;Cephalopoda;Octopoda;Octopodidae;Octopus",
+      str_starts(final_taxonomy, "Eukaryota;Mollusca;Cephalopoda;Oegopsida") ~ "Eukaryota;Mollusca;Cephalopoda;Oegopsida",
+      str_starts(final_taxonomy, "Eukaryota;Arthropoda;Malacostraca;Decapoda;Crangonidae;Crangon") ~ "Eukaryota;Arthropoda;Malacostraca;Decapoda;Crangonidae;Crangon",
+      str_starts(final_taxonomy, "Eukaryota;Arthropoda;Malacostraca;Decapoda;Pandalidae;Pandalus") ~ "Eukaryota;Arthropoda;Malacostraca;Decapoda;Pandalidae;Pandalus",
+      str_starts(final_taxonomy, "Eukaryota;Annelida;Polychaeta;Phyllodocida;Nereididae") ~ "Eukaryota;Annelida;Polychaeta;Phyllodocida;Nereididae",
+      str_starts(final_taxonomy, "Eukaryota;Arthropoda;Malacostraca;Decapoda;Callianassidae;Neotrypaea") ~ "Eukaryota;Arthropoda;Malacostraca;Decapoda;Callianassidae;Neotrypaea",
       TRUE ~ final_taxonomy  # Keep the original taxonomy if it doesn't match the above conditions
     ))
 }
