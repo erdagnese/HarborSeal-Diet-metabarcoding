@@ -1,0 +1,107 @@
+---
+title: "Mix_Diet_metadata_formatting"
+author: "Erin D'Agnese"
+date: "2025-08-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+This script is meant to take the input metadata for the diet and tissue mixtures and format them for use in all the correction scripts
+```{r}
+library(here)
+library(tidyverse)
+```
+
+bring in files
+```{r}
+TM_md <- read.csv(here("input-files","TissueMixture_metadata.csv"),header = T,check.names = F)
+
+CF_md <- read.csv(here("input-files","PvCF_master_diet_metadata.csv"),header = T,check.names = F)
+
+CF_scat_md <- read.csv(here("input-files","PvCF_scat_metadata.csv"),header = T,check.names = F)
+
+run_md <- read.csv(here("input-files","CorrectionBias_run_metadata.csv"),header = T,check.names = F)
+
+sp_map <- read.csv(here("input-files","Species_mapping_18S_MiFish.csv"),header = T,check.names = F)
+
+
+mock_md <- read.csv(here("input-files","Mock_communities_18S_metadata.csv"),header = T,check.names = F)
+```
+
+Let's deal with the controlled_feeding first, should be more straightforward
+```{r}
+CF_md %>% 
+  dplyr::rename("actual_mass"="actual mass") %>% 
+  mutate(actual_prop = actual_mass/total_mass) %>% 
+  group_by(diet,date,seal_id) -> CF_md
+
+CF_scat_md %>% 
+  mutate(diet = paste("D",Diet,sep = "")) %>% 
+  select(!Diet) %>% 
+  dplyr::rename("date"="Date") %>% 
+  select(!c(PCR_ID,Tech_rep)) %>% 
+  distinct(SampleID,date,Time,diet,Seal_ID_1,Seal_ID_2,Scat_details) -> CF_scat_map
+
+
+# First, pivot the CF_scat_map to long format for seal IDs
+CF_scat_long <- CF_scat_map %>%
+  mutate(across(c(Seal_ID_1, Seal_ID_2), ~na_if(., ""))) %>%
+  pivot_longer(
+    cols = c(Seal_ID_1, Seal_ID_2),
+    names_to = "seal_source",
+    values_to = "seal_id"
+  ) %>%
+  filter(!is.na(seal_id)) %>%
+  select(-seal_source)
+
+# Now join with CF_md to get the diet information
+CF_combined_md <- CF_scat_long %>%
+  left_join(CF_md, by = c("date", "seal_id", "diet")) %>%
+  select(SampleID, date, Time, seal_id, Scat_details, diet_sp, 
+         expected_prop, actual_mass, total_mass, actual_prop) %>%
+  arrange(SampleID, seal_id, diet_sp)
+
+# View the result
+head(CF_combined_md)
+  
+```
+okay let's get the sp_map sorted and then joined for the CF metadata
+```{r}
+sp_map %>% 
+  mutate(across(c(diet_sp, MiFish_taxon_assign), ~na_if(., ""))) %>%
+  filter(!is.na(diet_sp)) %>% 
+  select(Species,MiFish_taxon_assign,"18S_taxon_assign",diet_sp) %>% 
+  distinct()-> diet_sp_map
+
+CF_combined_md <- left_join(CF_combined_md,diet_sp_map, by="diet_sp")
+
+write.csv(CF_combined_md, here("input-files","PvCF_master_scat_metadata.csv"),row.names = F)
+  
+```
+
+alright now the tissue mixtures
+```{r}
+TM_md %>% 
+  select(!c(Box_tiss_mix,Box_subs_mix,Mass_subs_mix_g,Overall_comments,Lost_mass,After_mix_mass,Subsampled_mix,Date,PacHer_sampleID)) %>% 
+  mutate(prop_target = Target_initial_mass/Mixture_final_mass) %>% 
+  mutate(prop_ref = PacHer_initial_mass/Mixture_final_mass) %>% 
+  left_join(sp_map, by="Target_species") -> TM_md_temp
+
+run_md %>% 
+  filter(region == "TissueMix") %>% 
+  mutate(sample = samplename) %>% 
+  separate(samplename, into=c("TM","biol","SpeciesAbbrev","tech_rep"), sep = "_") %>% 
+  unite(samplename, c("TM","biol","SpeciesAbbrev"), sep = "_") -> run_TM_md
+
+TM_run_md <- left_join(run_TM_md, TM_md_temp,  by="samplename")
+
+TM_run_md %>% 
+  mutate(across(c(diet_sp, MiFish_taxon_assign), ~na_if(., ""))) -> TM_run_md
+
+write.csv(TM_run_md, here("input-files","TM_master_input_metadata.csv"), row.names = F)
+```
+
