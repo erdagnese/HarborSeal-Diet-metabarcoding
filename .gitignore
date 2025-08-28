@@ -6,3 +6,14 @@
 ## data folders
 /data/
 /data
+
+## figures are too big
+/Figures/
+/Figures
+
+## too large intermediate_files
+/intermediate-files/CorrectionBiasRun/Prey18S/model_out/
+/intermediate-files/CorrectionBiasRun/Prey18S/model_out
+
+/intermediate-files/CorrectionBiasRun/MiFish/model_out/
+/intermediate-files/CorrectionBiasRun/MiFish/model_out
