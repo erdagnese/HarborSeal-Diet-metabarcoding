@@ -85,6 +85,7 @@ Let's clean up the mock data of the species that are causing issues for model fi
 mock_data %>% 
   filter(taxon_assign != "Nereididae") %>% 
   filter(taxon_assign != "Lampetra fluviatilis") %>% 
+  #filter(taxon_assign != "Neotrypaea") %>% 
   filter(taxon_assign != "Chimaeridae") -> mock_data
 ```
 
@@ -143,10 +144,8 @@ asv_meta <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_1607
 
 asv_wild_data <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB2_18S_taxon_decontam_asv_table.csv"), header = T, check.names = F)
 
-wild_md <- read.table(here("data", "Wild_CB_Samples", "tourmaline-18S_CB2","00-data","metadata.tsv"), sep = "\t", header = T)
-scatlog <- read.csv(here("input-files","ScatLogMetadata.csv"), header=T,check.names = F)
-scatrunlist <- read.csv(here("input-files","run_list_metadata.csv"), header=T,check.names = F)
 
+wild_md3 <- read.csv(here("input-files","FULL_CBrun2_metadata.csv"), header = T)
 ```
 
 
@@ -254,64 +253,6 @@ this removed the ratfish because nothing assigned to chimaeriformes in the 18S m
 
 Let's do a sanity check- barplot of existing props of all species in each mock
 ```{r}
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-
-plot_taxonomy_proportions <- function(data, 
-                                     taxonomy_col = "ID_18S",
-                                     count_col = "count",
-                                     group_cols = c("community", "tech"),
-                                     top_n_taxa = 12,
-                                     plot_title = "Taxonomic Proportions by Group") {
-  
-  # Calculate proportions
-  prop_data <- data %>%
-    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
-    summarise(total_count = sum(.data[[count_col]]), .groups = "drop_last") %>%
-    mutate(proportion = total_count / sum(total_count)) %>%
-    ungroup()
-  
-  # Get top taxa for each group
-  top_taxa <- prop_data %>%
-    group_by(.data[[taxonomy_col]]) %>%
-    summarise(avg_prop = mean(proportion)) %>%
-    arrange(desc(avg_prop)) %>%
-    slice_head(n = top_n_taxa) %>%
-    pull(.data[[taxonomy_col]])
-  
-  # Filter and order data
-  plot_data <- prop_data %>%
-    mutate(!!sym(taxonomy_col) := ifelse(.data[[taxonomy_col]] %in% top_taxa, 
-                                        .data[[taxonomy_col]], "Other"),
-           !!sym(taxonomy_col) := factor(.data[[taxonomy_col]], 
-                                        levels = c(top_taxa, "Other"))) %>%
-    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
-    summarise(proportion = sum(proportion), .groups = "drop")
-  
-  # Create combined grouping variable for plotting
-  plot_data <- plot_data %>%
-    unite("group", all_of(group_cols), sep = " | ")
-  
-  # Generate plot
-  p <- ggplot(plot_data, aes(x = group, y = proportion, fill = .data[[taxonomy_col]])) +
-    geom_bar(stat = "identity", position = "stack") +
-    labs(title = plot_title,
-         x = paste(group_cols, collapse = " | "),
-         y = "Proportion of Counts",
-         fill = taxonomy_col) +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1),
-          legend.text = element_text(size = 7)) +
-    scale_y_continuous(labels = scales::percent)
-  
-  if (length(top_taxa) > 5) {
-    p <- p + guides(fill = guide_legend(ncol = 2))
-  }
-  
-  return(p)
-}
-
 # Example usage:
 p1 <- plot_taxonomy_proportions(merged_data_comb_fish, 
                                plot_title = "Initial Mock Check")
@@ -365,110 +306,6 @@ samples18S_asv_data <- filtered_asv_data %>%
 
 ```
 
-formatting the CB metadata then asv data to select samples that have enough reads to the mock species to work in the model
-```{r}
-library(tidyverse)
-library(stringr)
-
-scatlog_md <- left_join(scatlog,scatrunlist, by = "Sample_ID")
-scatlog_md %>% 
-  mutate(sampleid = ifelse(is.na(sampleid),Sample_ID, sampleid)) %>% 
-  select(!year) %>% 
-  separate(Collection_Date, into = c("day","month","year"),
-           sep = "-", remove = TRUE) %>% 
-  mutate(year = ifelse(str_length(year) == 2, paste0("20", year), year)) -> scatlog_md
-
-# Create a clean version of sampleid in wild_md that matches scatlog_md format
-wild_md2 <- wild_md %>%
-  mutate(
-    # Standardize case
-    samplename = ifelse(!str_starts(sampleid, "Kang"), 
-                       str_replace(sampleid, "^PV", "Pv"), 
-                       sampleid),
-    
-    # Extract tech number
-    tech = case_when(
-      str_starts(samplename, "Kang") ~ "1",
-      str_detect(samplename, "_\\d+$") ~ str_extract(samplename, "\\d+$"),
-      str_detect(samplename, "-\\d+$") ~ str_extract(samplename, "\\d+$"),
-      TRUE ~ "1"
-    ),
-    
-    # Remove tech numbers and _A suffixes
-    clean_sampleid = ifelse(str_starts(samplename, "Kang"),
-                           samplename,
-                           str_replace(samplename, "[_\\-]\\d+$", "")),
-    
-    clean_sampleid = ifelse(str_detect(clean_sampleid, "^Pv18.*_A"),
-                           str_replace(clean_sampleid, "_A.*", ""),
-                           clean_sampleid)
-  ) %>%
-  # Handle Pv18 number padding separately
-  mutate(
-    pv18_num = ifelse(str_detect(clean_sampleid, "^Pv18[_\\-]"),
-                     str_extract(clean_sampleid, "(?<=[_\\-])\\d+"),
-                     NA_character_),
-    
-    clean_sampleid = ifelse(!is.na(pv18_num),
-                           paste0("Pv18-", str_pad(pv18_num, width = 4, pad = "0", side = "left")),
-                           clean_sampleid)
-  ) %>%
-  select(-pv18_num)
-
-#let's save this because we have done this so many times it's frankly dumb not to have it for use
-write.csv(scatlog_md, here("input-files","SPS_scatlog_runlist_metadata.csv"), row.names = F)
-
-# Now you can join using the clean_sampleid
-wild_md3 <- wild_md2 %>%
-  left_join(scatlog_md, by = c("clean_sampleid" = "sampleid")) %>% 
-  mutate(
-    month = case_when(
-      month == "Jan" ~ "01",
-      month == "Feb" ~ "02", 
-      month == "Mar" ~ "03",
-      month == "Apr" ~ "04",
-      month == "May" ~ "05",
-      month == "Jun" ~ "06",
-      month == "Jul" ~ "07",
-      month == "Aug" ~ "08",
-      month == "Sep" ~ "09",
-      month == "Oct" ~ "10",
-      month == "Nov" ~ "11",
-      month == "Dec" ~ "12",
-      TRUE ~ month  # fallback
-    )) %>% 
-  mutate(
-    Sample_ID = ifelse(is.na(Sample_ID), samplename, Sample_ID)) %>% 
-  mutate(
-    Collection_Location = case_when(
-      str_detect(sampleid, "Kang") ~ "ControlSample",
-      TRUE ~ Collection_Location  # keep original value if not Kang
-    )
-  ) %>% 
-  mutate(
-    # Ensure day, month_number, and year are all character for pasting
-    across(c(day, month, year), as.character),
-    
-    # Create date column (YYYY-MM-DD format)
-    date = ymd(paste(year, month, day, sep = "-")),
-    
-    # Alternative if you want numeric date (days since epoch)
-    date_numeric = as.numeric(date)
-  ) %>% 
-  mutate(
-    Collection_Location = str_remove_all(Collection_Location, "\\s+")
-  ) %>% 
-  group_by(Collection_Location, date) %>%
-  mutate(
-    biol = row_number()  # running number within each location-date group
-  ) %>%
-  ungroup()
-
-write.csv(wild_md3, here("input-files","FULL_CBrun2_metadata.csv"),row.names = F)
-#this will map back to the sample names and metadata
-
-wild_md3 <- read.csv(here("input-files","FULL_CBrun2_metadata.csv"), header = T)
-```
 
 wild samples data formatting
 ```{r}
@@ -521,7 +358,7 @@ input_mock_RFcomm %>%
   mutate(station = station_idx) -> input_mock_RFcomm_RDS
 
 #save for future use
-saveRDS(input_mock_RFcomm_RDS, here("intermediate-files","Prey18S_RepFish_mock_community_data.RDS") )
+saveRDS(input_mock_RFcomm, here("intermediate-files","Prey18S_RepFish_mock_community_data.RDS") )
 
 #and now the CombFish
 merged_data_comb_fish %>% 
@@ -548,91 +385,14 @@ input_mock_CFcomm %>%
   mutate(station = station_idx) -> input_mock_CFcomm_RDS
 
 #save for future use
-saveRDS(input_mock_CFcomm_RDS, here("intermediate-files","Prey18S_CombFish_mock_community_data.RDS") )
+saveRDS(input_mock_CFcomm, here("intermediate-files","Prey18S_CombFish_mock_community_data.RDS") )
 
 #we are going to us the input_mock_RFcomm and input_mock_CFcomm in the combine
+
+input_mock_CFcomm <- readRDS(here("intermediate-files","Prey18S_CombFish_mock_community_data.RDS"))
 ```
 
 Now the mock data should be ready to input in the model calibration, but let's make sure the prop calc outputs worked as expected compared to the previous figure 
-```{r, basic plotting function}
-plot_proportion_comparison <- function(data, 
-                                      taxonomy_col = "species",
-                                      count_col = "nReads",
-                                      existing_prop_col = "propReads",
-                                      group_cols = c("Community", "tech"),
-                                      top_n_taxa = 12,
-                                      plot_title = "Proportion Comparison") {
-  
-  # Calculate proportions from counts
-  calc_data <- data %>%
-    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
-    summarise(total_count = sum(.data[[count_col]]), .groups = "drop_last") %>%
-    mutate(calculated_prop = total_count / sum(total_count)) %>%
-    ungroup()
-  
-  # Get existing proportions if column exists
-  if (existing_prop_col %in% names(data)) {
-    existing_data <- data %>%
-      group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
-      summarise(existing_prop = sum(.data[[existing_prop_col]]), .groups = "drop")
-    
-    # Combine both datasets
-    plot_data <- full_join(calc_data, existing_data, 
-                          by = c(group_cols, taxonomy_col))
-  } else {
-    message("No existing proportion column found - plotting only calculated proportions")
-    plot_data <- calc_data %>%
-      mutate(existing_prop = NA_real_)
-  }
-  
-  # Get top taxa based on calculated proportions
-  top_taxa <- calc_data %>%
-    group_by(.data[[taxonomy_col]]) %>%
-    summarise(avg_prop = mean(calculated_prop)) %>%
-    arrange(desc(avg_prop)) %>%
-    slice_head(n = top_n_taxa) %>%
-    pull(.data[[taxonomy_col]])
-  
-  # Prepare data for plotting
-  plot_data <- plot_data %>%
-    mutate(!!sym(taxonomy_col) := ifelse(.data[[taxonomy_col]] %in% top_taxa, 
-                                        .data[[taxonomy_col]], "Other"),
-           !!sym(taxonomy_col) := factor(.data[[taxonomy_col]], 
-                                        levels = c(top_taxa, "Other"))) %>%
-    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
-    summarise(calculated_prop = sum(calculated_prop, na.rm = TRUE),
-              existing_prop = sum(existing_prop, na.rm = TRUE),
-              .groups = "drop") %>%
-    pivot_longer(cols = c(calculated_prop, existing_prop),
-                 names_to = "proportion_type",
-                 values_to = "proportion") %>%
-    unite("group", all_of(group_cols), sep = " | ") %>%
-    mutate(proportion_type = factor(proportion_type,
-                                   levels = c("calculated_prop", "existing_prop"),
-                                   labels = c("From Counts", "Existing Proportions")))
-  
-  # Generate plot
-  p <- ggplot(plot_data, aes(x = group, y = proportion, fill = .data[[taxonomy_col]])) +
-    geom_bar(stat = "identity", position = "stack") +
-    facet_wrap(~ proportion_type, ncol = 2) +
-    labs(title = plot_title,
-         x = paste(group_cols, collapse = " | "),
-         y = "Proportion",
-         fill = taxonomy_col) +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1),
-          legend.text = element_text(size = 7),
-          strip.text = element_text(face = "bold")) +
-    scale_y_continuous(labels = scales::percent)
-  
-  if (length(top_taxa) > 5) {
-    p <- p + guides(fill = guide_legend(ncol = 2))
-  }
-  
-  return(p)
-}
-
-```
 
 ```{r}
 # Example usage:
@@ -650,11 +410,6 @@ print(p4)
 The combined fish also look the same, so we can believe we are sane still.
 
 
-pull out the mixtures we want to include as mocks
-```{r}
-samples18S_asv_data %>% 
-  filter(region == "TissueMix") -> samples_TM_asv_data
-```
 
 Create the additional mock for the Penaeus in the controlled feeding study
 ```{r, extract taxon function}
@@ -680,8 +435,13 @@ extract_final_taxon <- function(full_taxonomy) {
 
 ```
 
+This chunk is for using TM as mocks - didn't work very well at all.
 
+pull out the mixtures we want to include as mocks
 ```{r}
+samples18S_asv_data %>% 
+  filter(region == "TissueMix") -> samples_TM_asv_data
+
 # 1. Process the sample data to extract species names
 samples_processed <- samples_TM_asv_data %>%
   mutate(
@@ -745,23 +505,6 @@ additional_mock <- samples_processed %>%
     N_pcr_mock
   )
 
-# 4. Combine all mock data
-combined_mock3 <- bind_rows(
-  input_mock_CFcomm,
-  input_mock_RFcomm,
-  additional_mock
-) %>%
-  arrange(Community, Tech_Rep, species)
-
-# 4. Combine all mock data
-combined_mock <- bind_rows(
-  input_mock_CFcomm,
-  input_mock_RFcomm
-) %>%
-  arrange(Community, Tech_Rep, species)
-
-# View the result
-print(combined_mock, n = 20)
 
 #saveRDS(additional_mock, here("intermediate-files","Prey18S_TMPenMock_data.RDS"))
 
@@ -769,6 +512,21 @@ print(combined_mock, n = 20)
 
 Now we can combine all the mocks
 ```{r}
+# 4. Combine all mock data
+combined_mock3 <- bind_rows(
+  input_mock_CFcomm,
+  input_mock_RFcomm
+) %>%
+  arrange(Community, Tech_Rep, species)
+
+# use one mock
+combined_mock <- input_mock_CFcomm %>%
+  arrange(Community, Tech_Rep, species)
+
+# View the result
+print(combined_mock, n = 20)
+
+
 # 2. CRITICAL: Create the station_mapping for the combined mock
 # The format_metabarcoding_data function uses this to map station numbers to names.
 # It expects a dataframe with columns 'stationname' and 'station'
@@ -805,79 +563,20 @@ combined_mock2 <- combined_mock %>%
 # View the result
 print(combined_mock2, n = 20)
 
+
+
 saveRDS(combined_mock2, here("intermediate-files","input_Prey18S_combined_mockBoth_data.RDS"))
 
 ```
 
-
+Now clean up data to only include taxa that are in the mock or related to things in the mock
 
 ```{r}
-#now clean up data to only include taxa that are in the mock or related to things in the mock
-# Function to parse sample names based on region
-library(tidyverse)
-library(stringr)
-
-# Enhanced parser that handles complex station names
-parse_sample_name <- function(samplename, region) {
-  parts <- str_split(samplename, "_")[[1]]
-  
-  if (region == "ControlFeeding") {
-    # Format: PvCF_D1_01_TR1 (exactly 4 parts)
-    creek <- parts[1]
-    station <- parts[2]
-    biol <- as.integer(parts[3])
-    tech <- as.integer(str_remove(parts[4], "TR"))
-  } else if (region == "TissueMix") {
-    creek <- "TM"
-    biol <- as.integer(parts[2])
-    
-    # Check if last part is a tech rep (digits or R+digits)
-    last_part <- tail(parts, 1)
-    if (str_detect(last_part, "^(R?\\d+)$")) {
-      tech <- as.integer(str_remove(last_part, "R"))
-      # Station is everything between biol and tech
-      station <- paste(parts[3:(length(parts)-1)], collapse = "_")
-    } else {
-      tech <- 1
-      # Station is everything after biol
-      station <- paste(parts[3:length(parts)], collapse = "_")
-    }
-  } else {
-    return(list(creek = NA, station = NA, biol = NA, tech = NA))
-  }
-  
-  return(list(creek = creek, station = station, biol = biol, tech = tech))
-}
-
-
-# Final transformation function
-modified_sample_data <- function(asv_data) {
-  asv_data %>%
-    filter(region %in% c("ControlFeeding", "TissueMix")) %>%
-    rowwise() %>%
-    mutate(
-      parsed = list(parse_sample_name(samplename, region)),
-      creek = parsed$creek,
-      station = parsed$station,
-      biol = parsed$biol,
-      tech = parsed$tech,
-      time = 1,
-      species = final_taxonomy,
-      Nreads = count
-    ) %>%
-    ungroup() %>%
-    # Keep samplename in the output for verification
-    select(samplename, time, creek, station, biol, tech, species, Nreads) %>%
-    filter(!is.na(creek))  # Remove any unparseable samples
-}
-
-
 # Run the transformation
 sample_data <- modified_sample_data(samples18S_asv_data)
 
 # Verify the transformation
 head(sample_data)
-
 
 ```
 let's get the wild samples in the same format so we can do the next steps for both datasets and then clean up only samples with enough reads

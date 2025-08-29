@@ -143,12 +143,145 @@ analyze_mock_species_in_samples <- function(sample_df, combined_mock_data) {
 # Usage example:
 #sample_metrics <- analyze_mock_species_in_samples(sample_data, combined_mock2)
 #wild_sample_metrics <- analyze_mock_species_in_samples(wild_sample_data, combined_mock2)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
 
+plot_taxonomy_proportions <- function(data, 
+                                      taxonomy_col = "ID_18S",
+                                      count_col = "count",
+                                      group_cols = c("community", "tech"),
+                                      top_n_taxa = 12,
+                                      plot_title = "Taxonomic Proportions by Group") {
+  
+  # Calculate proportions
+  prop_data <- data %>%
+    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
+    summarise(total_count = sum(.data[[count_col]]), .groups = "drop_last") %>%
+    mutate(proportion = total_count / sum(total_count)) %>%
+    ungroup()
+  
+  # Get top taxa for each group
+  top_taxa <- prop_data %>%
+    group_by(.data[[taxonomy_col]]) %>%
+    summarise(avg_prop = mean(proportion)) %>%
+    arrange(desc(avg_prop)) %>%
+    slice_head(n = top_n_taxa) %>%
+    pull(.data[[taxonomy_col]])
+  
+  # Filter and order data
+  plot_data <- prop_data %>%
+    mutate(!!sym(taxonomy_col) := ifelse(.data[[taxonomy_col]] %in% top_taxa, 
+                                         .data[[taxonomy_col]], "Other"),
+           !!sym(taxonomy_col) := factor(.data[[taxonomy_col]], 
+                                         levels = c(top_taxa, "Other"))) %>%
+    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
+    summarise(proportion = sum(proportion), .groups = "drop")
+  
+  # Create combined grouping variable for plotting
+  plot_data <- plot_data %>%
+    unite("group", all_of(group_cols), sep = " | ")
+  
+  # Generate plot
+  p <- ggplot(plot_data, aes(x = group, y = proportion, fill = .data[[taxonomy_col]])) +
+    geom_bar(stat = "identity", position = "stack") +
+    labs(title = plot_title,
+         x = paste(group_cols, collapse = " | "),
+         y = "Proportion of Counts",
+         fill = taxonomy_col) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.text = element_text(size = 7)) +
+    scale_y_continuous(labels = scales::percent)
+  
+  if (length(top_taxa) > 5) {
+    p <- p + guides(fill = guide_legend(ncol = 2))
+  }
+  
+  return(p)
+}
+
+plot_proportion_comparison <- function(data, 
+                                       taxonomy_col = "species",
+                                       count_col = "nReads",
+                                       existing_prop_col = "propReads",
+                                       group_cols = c("Community", "tech"),
+                                       top_n_taxa = 12,
+                                       plot_title = "Proportion Comparison") {
+  
+  # Calculate proportions from counts
+  calc_data <- data %>%
+    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
+    summarise(total_count = sum(.data[[count_col]]), .groups = "drop_last") %>%
+    mutate(calculated_prop = total_count / sum(total_count)) %>%
+    ungroup()
+  
+  # Get existing proportions if column exists
+  if (existing_prop_col %in% names(data)) {
+    existing_data <- data %>%
+      group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
+      summarise(existing_prop = sum(.data[[existing_prop_col]]), .groups = "drop")
+    
+    # Combine both datasets
+    plot_data <- full_join(calc_data, existing_data, 
+                           by = c(group_cols, taxonomy_col))
+  } else {
+    message("No existing proportion column found - plotting only calculated proportions")
+    plot_data <- calc_data %>%
+      mutate(existing_prop = NA_real_)
+  }
+  
+  # Get top taxa based on calculated proportions
+  top_taxa <- calc_data %>%
+    group_by(.data[[taxonomy_col]]) %>%
+    summarise(avg_prop = mean(calculated_prop)) %>%
+    arrange(desc(avg_prop)) %>%
+    slice_head(n = top_n_taxa) %>%
+    pull(.data[[taxonomy_col]])
+  
+  # Prepare data for plotting
+  plot_data <- plot_data %>%
+    mutate(!!sym(taxonomy_col) := ifelse(.data[[taxonomy_col]] %in% top_taxa, 
+                                         .data[[taxonomy_col]], "Other"),
+           !!sym(taxonomy_col) := factor(.data[[taxonomy_col]], 
+                                         levels = c(top_taxa, "Other"))) %>%
+    group_by(across(all_of(c(group_cols, taxonomy_col)))) %>%
+    summarise(calculated_prop = sum(calculated_prop, na.rm = TRUE),
+              existing_prop = sum(existing_prop, na.rm = TRUE),
+              .groups = "drop") %>%
+    pivot_longer(cols = c(calculated_prop, existing_prop),
+                 names_to = "proportion_type",
+                 values_to = "proportion") %>%
+    unite("group", all_of(group_cols), sep = " | ") %>%
+    mutate(proportion_type = factor(proportion_type,
+                                    levels = c("calculated_prop", "existing_prop"),
+                                    labels = c("From Counts", "Existing Proportions")))
+  
+  # Generate plot
+  p <- ggplot(plot_data, aes(x = group, y = proportion, fill = .data[[taxonomy_col]])) +
+    geom_bar(stat = "identity", position = "stack") +
+    facet_wrap(~ proportion_type, ncol = 2) +
+    labs(title = plot_title,
+         x = paste(group_cols, collapse = " | "),
+         y = "Proportion",
+         fill = taxonomy_col) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.text = element_text(size = 7),
+          strip.text = element_text(face = "bold")) +
+    scale_y_continuous(labels = scales::percent)
+  
+  if (length(top_taxa) > 5) {
+    p <- p + guides(fill = guide_legend(ncol = 2))
+  }
+  
+  return(p)
+}
 
 
 # Modified formatting function with external station mapping
 format_metabarcoding_data <- function(input_metabarcoding_RDS, input_mock_comm_RDS, 
-                                      station_mapping, reference_species = "Actinopteri") {
+                                      station_mapping, reference_species = "Alosa sapidissima") {
   require(tidyverse)
   
   Observation <- input_metabarcoding_RDS
@@ -235,7 +368,7 @@ format_metabarcoding_data <- function(input_metabarcoding_RDS, input_mock_comm_R
   # library(here)
   # qmdata <- format_metabarcoding_data(input_metabarcoding_RDS,input_mock_comm_RDS, station_mapping = station_mapping, reference_species = "Actinopteri")
 
-  # additive log-ratio transform of a matrix; defined here, used in makeDesign()
+##### FIXED VERSION WITH spread() ####
 alrTransform <- function(MOCK){
   require(tidyverse)
   require(compositions)
@@ -258,140 +391,139 @@ alrTransform <- function(MOCK){
   
   return(p_mock)
 }
-
   
   
- makeDesign <- function(obs, #obs is a named list with elements Observation, Mock, N_pcr_mock, sp_list
-                        N_pcr_cycles){ #N_pcr_cycles is the number of PCR cycles in your experimental/enviro samples; currently a single value, could be made into a vector if this number varies
-   #library(tidyverse)
-   library(MCMCpack)
-   library(compositions)
-   library(rstan)
-   library(dplyr)
-   
-   
-   mock <- obs$Mock
-   observed <- obs$Observation
-   
-   p_mock_all <- alrTransform(mock)
-   
-   mock_3 <- mock %>% 
-     dplyr::select(species, station, tech, Nreads) %>% 
-     ungroup() %>% 
-     mutate(species = paste0("sp_", species)) %>% 
-     pivot_wider(names_from = species, values_from = Nreads, 
-                 values_fill = 0)  # FIXED: named list
-   
-   N_pcr_mock <- rep(obs$N_pcr_mock, nrow(p_mock_all)) #assumes all have the same Npcr
-   
-   
-   p_samp_all <- observed %>% 
-     ungroup() %>% 
-     unite(time, creek, station, biol, col = "station") %>% 
-     dplyr::select(station, tech, species, Nreads) %>% 
-     rename(tech_rep = tech) %>% 
-     mutate(species = paste0("sp_", species)) %>% 
-     arrange(species) %>% 
-     group_by(station, tech_rep,species) %>% 
-     dplyr::summarise(Nreads= sum(Nreads)) %>% 
-     ungroup() %>% 
-     pivot_wider(names_from = species, values_from = Nreads, 
-                 values_fill = 0)
-   N_pcr_samp <- rep(N_pcr_cycles, nrow(p_samp_all))
-   
-   ########################################################################
-   #### Create data frames that can be read into Stan model
-   ########################################################################
-   
-   NOM <- as.name(colnames(p_mock_all)[1])
-   formula_a <- eval(NOM) ~ N_pcr_mock -1
-   model_frame <- model.frame(formula_a, p_mock_all)
-   model_vector_a_mock <- model.matrix(formula_a, model_frame) %>% as.numeric()
-   N_pcr_mock_small <- cbind(N_pcr_mock, p_mock_all) %>%  filter(tech_rep == 1) %>% pull(N_pcr_mock)
-   formula_b <- eval(NOM) ~ N_pcr_mock_small -1
-   model_frame <- model.frame(formula_b, p_mock_all%>% filter(tech_rep==1))
-   model_vector_a_mock_small <- model.matrix(formula_b, model_frame) %>% as.numeric()
-   
-   N_obs_mock       <- nrow(p_mock_all)
-   
-   # unknown communities second
-   # species compositions (betas)
-   
-   NOM <- as.name(colnames(p_samp_all)[1])    
-   
-   p_samp_all$station <- as.factor(p_samp_all$station)
-   N_station = length(unique(p_samp_all$station))
-   p_samp_all$tech_rep <- as.factor(p_samp_all$tech_rep)
-   if(N_station == 1){
-     formula_b <- eval(NOM) ~ 1  
-   } else {
-     formula_b <- eval(NOM) ~ station
-   }
-   
-   model_frame <- model.frame(formula_b, p_samp_all)
-   model_matrix_b_samp <- model.matrix(formula_b, model_frame)
-   
-   # choose a single representative for each station to make predictions to
-   model_frame <- model.frame(formula_b, p_samp_all %>% filter(tech_rep==1))
-   model_matrix_b_samp_small <- model.matrix(formula_b, model_frame)
-   
-   # efficiencies (alpha)
-   formula_a <- eval(NOM) ~ N_pcr_samp -1
-   model_frame <- model.frame(formula_a, p_samp_all)
-   model_vector_a_samp <- model.matrix(formula_a, model_frame) %>% as.numeric()
-   N_pcr_samp_small <- cbind(N_pcr_samp, p_samp_all) %>% filter(tech_rep == 1) %>% pull(N_pcr_samp)
-   formula_b <- eval(NOM) ~ N_pcr_samp_small -1
-   
-   model_frame <- model.frame(formula_b, p_samp_all %>% filter(tech_rep==1))
-   model_vector_a_samp_small <- model.matrix(formula_b, model_frame) %>% as.numeric()
-   
-   #counters 
-   N_obs_samp_small <- nrow(model_matrix_b_samp_small)
-   N_obs_samp <- nrow(p_samp_all)
-   N_b_samp_col <- ncol(model_matrix_b_samp)
-   
-   
-   #### Make Stan objects
-   
-   stan_data <- list(
-     N_species = ncol(p_samp_all)-2,   # Number of species in data
-     N_obs_samp = nrow(p_samp_all), # Number of observed community samples and tech replicates ; this will be Ncreek * Nt * Nbiol * Ntech * 2 [for upstream/downstream observations]
-     N_obs_mock = nrow(p_mock_all), # Number of observed mock samples, including tech replicates
-     N_obs_samp_small = nrow(p_samp_all %>% filter(tech_rep == 1)), # Number of unique observed community samples ; this will be Ncreek * Nt * Nbiol * 2 [for upstream/downstream observations]
-     
-     # Observed data of community matrices
-     sample_data = p_samp_all %>% dplyr::select(contains("sp")),
-     sample_vector = unique(p_samp_all$station),
-     mock_data   = mock_3 %>% dplyr::select(contains("sp")),
-     sp_list = obs$sp_list,
-     
-     # True proportions for mock community
-     #mock_true_prop = p_mock_all %>% dplyr::select(contains("sp")),
-     alr_mock_true_prop = p_mock_all %>% dplyr::select(contains("alr")),
-     
-     # vectors of PCR numbers
-     N_pcr_samp = N_pcr_samp,
-     N_pcr_mock = N_pcr_mock,
-     
-     # Design matrices: field samples
-     N_b_samp_col = N_b_samp_col,
-     model_matrix_b_samp = model_matrix_b_samp,
-     model_matrix_b_samp_small = as.array(model_matrix_b_samp_small),
-     model_vector_a_samp = model_vector_a_samp,
-     model_vector_a_samp_small = as.array(model_vector_a_samp_small),
-     
-     # Design matrices: mock community samples
-     model_vector_a_mock = as.array(model_vector_a_mock),
-     
-     # Priors
-     alpha_prior = c(0,0.5),  # normal prior
-     beta_prior = c(0,5),    # normal prior
-     tau_prior = c(1,2)   # gamma prior
-   )
-   
-   return(stan_data)
-   
- }
+makeDesign <- function(obs, #obs is a named list with elements Observation, Mock, N_pcr_mock, sp_list
+                       N_pcr_cycles){ #N_pcr_cycles is the number of PCR cycles in your experimental/enviro samples; currently a single value, could be made into a vector if this number varies
+  #library(tidyverse)
+  library(MCMCpack)
+  library(compositions)
+  library(rstan)
+  library(dplyr)
+  
+  
+  mock <- obs$Mock
+  observed <- obs$Observation
+  
+  p_mock_all <- alrTransform(mock)
+  
+  mock_3 <- mock %>% 
+    dplyr::select(species, station, tech, Nreads) %>% 
+    ungroup() %>% 
+    mutate(species = paste0("sp_", species)) %>% 
+    pivot_wider(names_from = species, values_from = Nreads, 
+                values_fill = 0)  # FIXED: named list
+  
+  N_pcr_mock <- rep(obs$N_pcr_mock, nrow(p_mock_all)) #assumes all have the same Npcr
+  
+  
+  p_samp_all <- observed %>% 
+    ungroup() %>% 
+    unite(time, creek, station, biol, col = "station") %>% 
+    dplyr::select(station, tech, species, Nreads) %>% 
+    rename(tech_rep = tech) %>% 
+    mutate(species = paste0("sp_", species)) %>% 
+    arrange(species) %>% 
+    group_by(station, tech_rep,species) %>% 
+    dplyr::summarise(Nreads= sum(Nreads)) %>% 
+    ungroup() %>% 
+    pivot_wider(names_from = species, values_from = Nreads, 
+                values_fill = 0)
+  N_pcr_samp <- rep(N_pcr_cycles, nrow(p_samp_all))
+  
+  ########################################################################
+  #### Create data frames that can be read into Stan model
+  ########################################################################
+  
+  NOM <- as.name(colnames(p_mock_all)[1])
+  formula_a <- eval(NOM) ~ N_pcr_mock -1
+  model_frame <- model.frame(formula_a, p_mock_all)
+  model_vector_a_mock <- model.matrix(formula_a, model_frame) %>% as.numeric()
+  N_pcr_mock_small <- cbind(N_pcr_mock, p_mock_all) %>%  filter(tech_rep == 1) %>% pull(N_pcr_mock)
+  formula_b <- eval(NOM) ~ N_pcr_mock_small -1
+  model_frame <- model.frame(formula_b, p_mock_all%>% filter(tech_rep==1))
+  model_vector_a_mock_small <- model.matrix(formula_b, model_frame) %>% as.numeric()
+  
+  N_obs_mock       <- nrow(p_mock_all)
+  
+  # unknown communities second
+  # species compositions (betas)
+  
+  NOM <- as.name(colnames(p_samp_all)[1])    
+  
+  p_samp_all$station <- as.factor(p_samp_all$station)
+  N_station = length(unique(p_samp_all$station))
+  p_samp_all$tech_rep <- as.factor(p_samp_all$tech_rep)
+  if(N_station == 1){
+    formula_b <- eval(NOM) ~ 1  
+  } else {
+    formula_b <- eval(NOM) ~ station
+  }
+  
+  model_frame <- model.frame(formula_b, p_samp_all)
+  model_matrix_b_samp <- model.matrix(formula_b, model_frame)
+  
+  # choose a single representative for each station to make predictions to
+  model_frame <- model.frame(formula_b, p_samp_all %>% filter(tech_rep==1))
+  model_matrix_b_samp_small <- model.matrix(formula_b, model_frame)
+  
+  # efficiencies (alpha)
+  formula_a <- eval(NOM) ~ N_pcr_samp -1
+  model_frame <- model.frame(formula_a, p_samp_all)
+  model_vector_a_samp <- model.matrix(formula_a, model_frame) %>% as.numeric()
+  N_pcr_samp_small <- cbind(N_pcr_samp, p_samp_all) %>% filter(tech_rep == 1) %>% pull(N_pcr_samp)
+  formula_b <- eval(NOM) ~ N_pcr_samp_small -1
+  
+  model_frame <- model.frame(formula_b, p_samp_all %>% filter(tech_rep==1))
+  model_vector_a_samp_small <- model.matrix(formula_b, model_frame) %>% as.numeric()
+  
+  #counters 
+  N_obs_samp_small <- nrow(model_matrix_b_samp_small)
+  N_obs_samp <- nrow(p_samp_all)
+  N_b_samp_col <- ncol(model_matrix_b_samp)
+  
+  
+  #### Make Stan objects
+  
+  stan_data <- list(
+    N_species = ncol(p_samp_all)-2,   # Number of species in data
+    N_obs_samp = nrow(p_samp_all), # Number of observed community samples and tech replicates ; this will be Ncreek * Nt * Nbiol * Ntech * 2 [for upstream/downstream observations]
+    N_obs_mock = nrow(p_mock_all), # Number of observed mock samples, including tech replicates
+    N_obs_samp_small = nrow(p_samp_all %>% filter(tech_rep == 1)), # Number of unique observed community samples ; this will be Ncreek * Nt * Nbiol * 2 [for upstream/downstream observations]
+    
+    # Observed data of community matrices
+    sample_data = p_samp_all %>% dplyr::select(contains("sp")),
+    sample_vector = unique(p_samp_all$station),
+    mock_data   = mock_3 %>% dplyr::select(contains("sp")),
+    sp_list = obs$sp_list,
+    
+    # True proportions for mock community
+    #mock_true_prop = p_mock_all %>% dplyr::select(contains("sp")),
+    alr_mock_true_prop = p_mock_all %>% dplyr::select(contains("alr")),
+    
+    # vectors of PCR numbers
+    N_pcr_samp = N_pcr_samp,
+    N_pcr_mock = N_pcr_mock,
+    
+    # Design matrices: field samples
+    N_b_samp_col = N_b_samp_col,
+    model_matrix_b_samp = model_matrix_b_samp,
+    model_matrix_b_samp_small = as.array(model_matrix_b_samp_small),
+    model_vector_a_samp = model_vector_a_samp,
+    model_vector_a_samp_small = as.array(model_vector_a_samp_small),
+    
+    # Design matrices: mock community samples
+    model_vector_a_mock = as.array(model_vector_a_mock),
+    
+    # Priors
+    alpha_prior = c(0,0.5),  # normal prior
+    beta_prior = c(0,5),    # normal prior
+    tau_prior = c(1,2)   # gamma prior
+  )
+  
+  return(stan_data)
+  
+}
 
   #example
   #stan_metabarcoding_data <- makeDesign(metabarcoding_data, N_pcr_cycles = 43)    

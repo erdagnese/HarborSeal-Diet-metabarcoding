@@ -80,14 +80,6 @@ mock_data %>%
 
 ```
 
-Let's clean up the mock data of the species that are causing issues for model fit
-```{r}
-#let's remove Nereididae abd the lamprey because they seem to be causing problems in the model and aren't that prevelant in the diet, plus we can use the TM if we need to, Neotrypaea may also be a problem in the combined data
-mock_data %>% 
-  filter(taxon_assign != "") %>% 
-  filter(taxon_assign != "") %>% 
-  filter(taxon_assign != "") -> mock_data
-```
 
 we need to make it longform with a specific name for each community that matches the samplenames in the sequencing metadata
 ```{r}
@@ -142,11 +134,9 @@ asv_data <- read.csv(here("intermediate-files","CorrectionBiasRun","CorBias_MiFi
 
 asv_meta <- read.csv(here("input-files","CorrectionBias_run_metadata.csv"),header = T, check.names = F)
 
-asv_wild_data <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB2_18S_taxon_decontam_asv_table.csv"), header = T, check.names = F)
+asv_wild_data <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB2_MiFish_taxon_decontam_asv_table.csv"), header = T, check.names = F)
 
-wild_md <- read.table(here("data", "Wild_CB_Samples", "tourmaline-18S_CB2","00-data","metadata.tsv"), sep = "\t", header = T)
-scatlog <- read.csv(here("input-files","ScatLogMetadata.csv"), header=T,check.names = F)
-scatrunlist <- read.csv(here("input-files","run_list_metadata.csv"), header=T,check.names = F)
+wild_md3 <- read.csv(here("input-files","FULL_CBrun2_metadata.csv"), header = T)
 
 ```
 
@@ -162,21 +152,29 @@ source(here("scripts","calibrate_metabarcoding.R"))
 let's select out the mock community samples 
 ```{r}
 asv_meta %>% 
+  filter(str_detect(Plate_ID, "MiFish")) %>% 
   filter(region == "MockCom") -> mock_asv_meta
 
 # First, get the sample IDs you want to keep from the metadata
 samples_to_keep <- mock_asv_meta$sampleid
 
+# Identify the row(s) with the specific taxonomy you want to modify
+target_taxonomy <- "Eukaryota;Chordata;Actinopteri;Salmoniformes;Salmonidae;Oncorhynchus"
+target_rows <- asv_data$final_taxonomy == target_taxonomy
+asv_data$final_taxonomy[target_rows] <- "Eukaryota;Chordata;Actinopteri;Salmoniformes;Salmonidae;Oncorhynchus;Oncorhynchus keta"
+
+
 # Convert the ASV table to long format and filter for desired samples
 filtered_asv_data <- asv_data %>%
-  # Keep the taxonomy column
   select(final_taxonomy, all_of(samples_to_keep)) %>%
-  # Convert to long format
   pivot_longer(
     cols = -final_taxonomy,
     names_to = "sampleid",
     values_to = "count"
   ) %>%
+  # Group by both taxonomy and sampleid, then sum counts
+  group_by(final_taxonomy, sampleid) %>%
+  summarize(count = sum(count), .groups = "drop") %>%
   # Filter to only include samples in your metadata
   filter(sampleid %in% samples_to_keep)
 
@@ -194,7 +192,7 @@ mock_asv_data <- mock_asv_data %>%
   # First separate samplename into all components
   separate(
     samplename,
-    into = c("sampletype", "marker", "commtype", "commmix", "tech"),
+    into = c("sampletype", "marker", "commmix", "tech"),
     sep = "_",
     remove = FALSE
   ) %>%
@@ -202,7 +200,7 @@ mock_asv_data <- mock_asv_data %>%
   mutate(
     tech = as.integer(str_remove(tech, "^R")),  # Remove "R" and convert to integer
     # Reconstruct community name without tech rep
-    community = paste(sampletype, marker, commtype, commmix, sep = "_")
+    community = paste(sampletype, marker, commmix, sep = "_")
   )
 
 mock_asv_data <- mock_asv_data %>%
@@ -223,7 +221,7 @@ mock_asv_data <- mock_asv_data %>%
   ungroup()
 
 # First get all unique ID_18S values we need to match
-ids_to_match <- unique(long_mock_data$ID_18S)
+ids_to_match <- unique(long_mock_data$ID_MiFish)
 
 # Create a list of taxonomy strings that contain any ID_18S
 valid_taxa <- mock_asv_data %>%
@@ -232,26 +230,34 @@ valid_taxa <- mock_asv_data %>%
   unique()
 
 # Filter and merge
-merged_data_rep_fish <- mock_asv_data %>%
+merged_data <- mock_asv_data %>%
   filter(final_taxonomy %in% valid_taxa) %>%
+  mutate(commtype = "PvPrey") %>% 
+  mutate(community = paste(commtype, commmix, sep = "_")) %>% 
   inner_join(long_mock_data, by = "community") %>%
-  filter(str_detect(final_taxonomy, ID_18S)) %>%
-  filter(commtype == "RepFish") %>% 
-  mutate(
-    community = paste(commtype, commmix, sep = "_")  # Combine commtype and commmix
-  )
+  filter(str_detect(final_taxonomy, ID_MiFish)) 
 
-merged_data_comb_fish <- mock_asv_data %>%
-  filter(final_taxonomy %in% valid_taxa) %>%
-  inner_join(long_mock_data, by = "community") %>%
-  filter(str_detect(final_taxonomy, ID_18S)) %>%
-  filter(commtype == "CombFish") %>% 
-  mutate(
-    community = paste(commtype, commmix, sep = "_")  # Combine commtype and commmix
-  )
 
 ```
-this removed the ratfish because nothing assigned to chimaeriformes in the 18S mocks - there is not a good 18S reference seq for ratfish and apparently it is different enough from the other chondricthyes that it won't even assign to that clade.
+Let's clean up the mock data of the species that hardly appeared in the mock if at all
+```{r}
+#let's remove the species that clearly didn't really make it into the mocks consistently
+merged_data %>% 
+  filter(ID_MiFish != "Liparis fucensis") %>%
+  filter(ID_MiFish != "Diaphus theta") %>%
+  filter(ID_MiFish != "Gobiesox maeandricus") %>%
+  filter(ID_MiFish != "Chitonotus pugetensis") %>% 
+  filter(ID_MiFish != "Hippoglossoides elassodon") %>%
+  filter(ID_MiFish != "Platichthys stellatus") %>%
+  filter(ID_MiFish != "Oncorhynchus kisutch") %>%
+  filter(ID_MiFish != "Oncorhynchus tshawytscha") %>%
+  filter(ID_MiFish != "Oncorhynchus keta") %>%
+  filter(ID_MiFish != "Porichthys notatus") %>%
+  filter(ID_MiFish != "Anoplarchus insignis") %>% 
+  filter(ID_MiFish != "Lumpenus sagitta") %>% 
+  filter(ID_MiFish != "Lepidopsetta bilineata") %>% 
+  filter(ID_MiFish != "Pholis laeta") -> merged_data
+```
 
 Let's do a sanity check- barplot of existing props of all species in each mock
 ```{r}
@@ -260,10 +266,10 @@ library(dplyr)
 library(tidyr)
 
 plot_taxonomy_proportions <- function(data, 
-                                     taxonomy_col = "ID_18S",
+                                     taxonomy_col = "ID_MiFish",
                                      count_col = "count",
                                      group_cols = c("community", "tech"),
-                                     top_n_taxa = 12,
+                                     top_n_taxa = 25,
                                      plot_title = "Taxonomic Proportions by Group") {
   
   # Calculate proportions
@@ -314,20 +320,13 @@ plot_taxonomy_proportions <- function(data,
 }
 
 # Example usage:
-p1 <- plot_taxonomy_proportions(merged_data_comb_fish, 
+p1 <- plot_taxonomy_proportions(merged_data, 
                                plot_title = "Initial Mock Check")
 
 print(p1)
 ```
-Okay that looks pretty normal for the combined fish mocks
+Okay that looks pretty normal 
 
-Now the RepFish one
-```{r}
-p2 <- plot_taxonomy_proportions(merged_data_rep_fish, 
-                               plot_title = "Initial Mock Check")
-
-print(p2)
-```
 
 The rep fish also looks appropriate based on what we expect for the Rep fish mocks.
 
@@ -336,11 +335,12 @@ Reference these when comparing the versions that are transformed along the way t
 Okay, now we also need to clean up the ASV tables of real-world sequence data. We will use the tissue mixture samples, the controlled feeding study and pull some commencement bay data as wild samples to ensure it works across all the sample types. 
 ```{r}
 asv_meta %>% 
-  filter(str_detect(Plate_ID,"Prey18S")) %>% 
-  filter(region %in% c("ControlFeeding","TissueMix")) -> asv_meta_18S_samples
+  filter(str_detect(Plate_ID, "MiFish")) %>% 
+  filter(region %in% c("ControlFeeding","TissueMix")) -> asv_meta_MF_samples
+
 
 # First, get the sample IDs you want to keep from the metadata
-samples_to_keep <- asv_meta_18S_samples$sampleid
+samples_to_keep <- asv_meta_MF_samples$sampleid
 # Find which samples_to_keep actually exist in asv_data
 existing_samples <- intersect(samples_to_keep, names(asv_data))
 
@@ -360,8 +360,8 @@ filtered_asv_data <- asv_data %>%
 # The result is a long-format dataframe with taxonomy, sampleid, and count columns
 head(filtered_asv_data)
 
-samples18S_asv_data <- filtered_asv_data %>%
-  left_join(asv_meta_18S_samples, by = "sampleid") %>% 
+samplesMF_asv_data <- filtered_asv_data %>%
+  left_join(asv_meta_MF_samples, by = "sampleid") %>% 
   select(samplename,region,final_taxonomy,count)
 
 ```
@@ -468,7 +468,7 @@ wild_md3 <- wild_md2 %>%
 write.csv(wild_md3, here("input-files","FULL_CBrun2_metadata.csv"),row.names = F)
 #this will map back to the sample names and metadata
 
-wild_md3 <- read.csv(here("input-files","FULL_CBrun2_metadata.csv"), header = T)
+
 ```
 
 wild samples data formatting
@@ -498,60 +498,33 @@ Now we need to save the cleaned up mock data as an .RDS so we can bring it in fo
 ```{r}
 #Using the RepFish mock first
 
-merged_data_rep_fish %>% 
-  select(ID_18S, community, tech, count,start_conc_ng) %>% 
+merged_data%>% 
+  select(ID_MiFish, community, tech, count,start_conc_ng) %>% 
   mutate(Cycles = 39) %>% 
-  rename("nReads" = "count") -> mock_18S_RF_input
+  rename("nReads" = "count") -> mock_MF_input
 
-input_mock_RFcomm <- mock_18S_RF_input %>% 
+input_mock_comm <- mock_MF_input %>% 
   filter(., Cycles ==39) %>% 
   group_by(community, tech) %>% 
   mutate(., totReads=sum(nReads),
          propReads = nReads/totReads,
          tot_start = sum(start_conc_ng),
          start_prop=start_conc_ng/tot_start) %>% 
-  dplyr::select(Community=community, Tech_Rep=tech,species=ID_18S, nReads,totReads,propReads,start_prop, N_pcr_mock=Cycles) %>% 
+  dplyr::select(Community=community, Tech_Rep=tech,species=ID_MiFish, nReads,totReads,propReads,start_prop, N_pcr_mock=Cycles) %>% 
   mutate(Tech_Rep = as.numeric(Tech_Rep),
          N_pcr_mock = as.numeric(N_pcr_mock)) 
 
-input_mock_RFcomm %>% 
+input_mock_comm %>% 
   rename(tech = Tech_Rep) %>% 
   group_by(Community) %>%
   mutate(station_idx = cur_group_id()) %>%
   ungroup() %>% 
-  mutate(station = station_idx) -> input_mock_RFcomm_RDS
+  mutate(station = station_idx) -> input_mock_comm_RDS
 
 #save for future use
-saveRDS(input_mock_RFcomm_RDS, here("intermediate-files","Prey18S_RepFish_mock_community_data.RDS") )
+saveRDS(input_mock_comm_RDS, here("intermediate-files","PvPrey_MiFish_mock_community_data.RDS") )
 
-#and now the CombFish
-merged_data_comb_fish %>% 
-  select(ID_18S, community, tech, count,start_conc_ng) %>% 
-  mutate(Cycles = 39) %>% 
-  rename("nReads" = "count") -> mock_18S_CF_input
 
-input_mock_CFcomm <- mock_18S_CF_input %>% 
-  filter(., Cycles ==39) %>% 
-  group_by(community, tech) %>% 
-  mutate(., totReads=sum(nReads),
-         propReads = nReads/totReads,
-         tot_start = sum(start_conc_ng),
-         start_prop=start_conc_ng/tot_start) %>% 
-  dplyr::select(Community=community, Tech_Rep=tech,species=ID_18S, nReads,totReads,propReads,start_prop, N_pcr_mock=Cycles) %>% 
-  mutate(Tech_Rep = as.numeric(Tech_Rep),
-         N_pcr_mock = as.numeric(N_pcr_mock)) 
-
-input_mock_CFcomm %>% 
-  rename(tech = Tech_Rep) %>% 
-  group_by(Community) %>%
-  mutate(station_idx = cur_group_id()) %>%
-  ungroup() %>% 
-  mutate(station = station_idx) -> input_mock_CFcomm_RDS
-
-#save for future use
-saveRDS(input_mock_CFcomm_RDS, here("intermediate-files","Prey18S_CombFish_mock_community_data.RDS") )
-
-#we are going to us the input_mock_RFcomm and input_mock_CFcomm in the combine
 ```
 
 Now the mock data should be ready to input in the model calibration, but let's make sure the prop calc outputs worked as expected compared to the previous figure 
@@ -561,7 +534,7 @@ plot_proportion_comparison <- function(data,
                                       count_col = "nReads",
                                       existing_prop_col = "propReads",
                                       group_cols = c("Community", "tech"),
-                                      top_n_taxa = 12,
+                                      top_n_taxa = 25,
                                       plot_title = "Proportion Comparison") {
   
   # Calculate proportions from counts
@@ -637,25 +610,12 @@ plot_proportion_comparison <- function(data,
 
 ```{r}
 # Example usage:
-p3 <- plot_proportion_comparison(input_mock_RFcomm_RDS,existing_prop_col = "propReads",
+p3 <- plot_proportion_comparison(input_mock_comm_RDS,existing_prop_col = "propReads",
                                  plot_title = "Count vs Existing Proportions")
 print(p3)
 ```
-They look correct
-
-```{r}
-p4 <- plot_proportion_comparison(input_mock_CFcomm_RDS,existing_prop_col = "propReads",
-                                 plot_title = "Count vs Existing Proportions")
-print(p4)
-```
-The combined fish also look the same, so we can believe we are sane still.
 
 
-pull out the mixtures we want to include as mocks
-```{r}
-samples18S_asv_data %>% 
-  filter(region == "TissueMix") -> samples_TM_asv_data
-```
 
 Create the additional mock for the Penaeus in the controlled feeding study
 ```{r, extract taxon function}
@@ -683,82 +643,10 @@ extract_final_taxon <- function(full_taxonomy) {
 
 
 ```{r}
-# 1. Process the sample data to extract species names
-samples_processed <- samples_TM_asv_data %>%
-  mutate(
-    species = map_chr(final_taxonomy, extract_final_taxon),
-    species = str_trim(species)
-  ) %>%
-  filter(!is.na(species), species != "")
 
-# 2. Create mock sample mapping (updated with your actual mock patterns)
-mock_sample_mapping <- samples_TM_asv_data %>%
-  dplyr::select(samplename) %>%
-  distinct() %>%
-  mutate(
-    Community = case_when(
-      str_detect(samplename, "BlkTigShrVAQ") ~ "TM_BlkTigShrVAQ",
-      # Add more patterns based on your actual sample names
-      TRUE ~ NA_character_
-    )
-  ) %>%
-  filter(!is.na(Community))
-
-# 3. Build the additional_mock table
-additional_mock <- samples_processed %>%
-  # Join to assign Community names to each sample
-  left_join(mock_sample_mapping, by = "samplename") %>%
-  filter(!is.na(Community)) %>% # Keep only samples assigned to a mock
-  # Group by sample and species to sum counts from different ASVs of the same species
-  group_by(Community, samplename, species) %>%
-  summarise(nReads = sum(count), .groups = 'drop') %>%
-  # Assign tech replicate number based on samplename (e.g., 01 -> 1, 02 -> 2)
-  mutate(Tech_Rep = as.integer(str_extract(samplename, "(?<=_)\\d+(?=_)"))) %>%
-  # Define the TRUE input composition for each mock community
-  # You'll need to fill this in with the actual concentrations for your mocks
-  mutate(
-    start_conc_ng = case_when(
-      Community == "TM_BlkTigShrVAQ" & species == "Penaeus monodon" ~ 0.5,
-      Community == "TM_BlkTigShrVAQ" & species == "Actinopteri" ~ 0.5,
-      TRUE ~ 0 # Everything else was not added to the mock
-    )
-  ) %>%
-  filter(start_conc_ng > 0) %>% # Remove species not actually in the mock design
-  # Group by Community and tech rep to calculate proportions and totals
-  group_by(Community, Tech_Rep) %>%
-  mutate(
-    N_pcr_mock = 39, # Set the correct number of PCR cycles for these runs
-    totReads = sum(nReads),
-    propReads = nReads / totReads,
-    tot_start_ng = sum(start_conc_ng),
-    start_prop = start_conc_ng / tot_start_ng
-  ) %>%
-  ungroup() %>%
-  # Select and finalize columns to match the input_mock_CFcomm structure
-  dplyr::select(
-    Community,
-    Tech_Rep,
-    species,
-    nReads,
-    totReads,
-    propReads,
-    start_prop,
-    N_pcr_mock
-  )
 
 # 4. Combine all mock data
-combined_mock3 <- bind_rows(
-  input_mock_CFcomm,
-  input_mock_RFcomm,
-  additional_mock
-) %>%
-  arrange(Community, Tech_Rep, species)
-
-# 4. Combine all mock data
-combined_mock <- bind_rows(
-  input_mock_CFcomm,
-  input_mock_RFcomm
-) %>%
+combined_mock <- input_mock_comm %>%
   arrange(Community, Tech_Rep, species)
 
 # View the result
@@ -806,8 +694,9 @@ combined_mock2 <- combined_mock %>%
 # View the result
 print(combined_mock2, n = 20)
 
-saveRDS(combined_mock2, here("intermediate-files","input_Prey18S_combined_mockBoth_data.RDS"))
+saveRDS(combined_mock2, here("intermediate-files","input_PvPrey_MiFish_mock_data.RDS"))
 
+combined_mock2 <- readRDS(here("intermediate-files","input_PvPrey_MiFish_mock_data.RDS"))
 ```
 
 
@@ -874,7 +763,7 @@ modified_sample_data <- function(asv_data) {
 
 
 # Run the transformation
-sample_data <- modified_sample_data(samples18S_asv_data)
+sample_data <- modified_sample_data(samplesMF_asv_data)
 
 # Verify the transformation
 head(sample_data)
@@ -1071,7 +960,7 @@ filtered_PvCF_data <- filter_sample_data_by_metrics(
 
 filtered_wild_samples <- filter_sample_data_by_metrics(
   wild_sample_data, wild_sample_metrics, creek_filter = "PvScat",
-  min_prop_mock = 0.5, min_mock_species = 3, min_total_reads = 5000
+  min_prop_mock = 0.2, min_mock_species = 2, min_total_reads = 5000
 )
 
 # Combine if desired
@@ -1124,7 +1013,7 @@ Okay we need to get all the sample_data together so we can make a station_mappin
 combined_sample_data <- rbind(sample_data_HQ,wild_sample_data_HQ)
 
 #save for future use
-saveRDS(combined_sample_data, here("intermediate-files","Prey18S_ALLObsSamples_data_20250824.RDS"))
+saveRDS(combined_sample_data, here("intermediate-files","PreyMiFish_ALLObsSamples_data_20250828.RDS"))
 
 ```
 
@@ -1185,8 +1074,9 @@ cat("Unique species in final data:", length(unique(combined_sample_data_filtered
 #cat("Species kept after abundance filtering:", length(species_to_keep), "\n")
 
 #save for future use
-saveRDS(combined_sample_data_filtered, here("intermediate-files","Prey18S_CF_TM_Wild_input_data.RDS"))
+saveRDS(combined_sample_data_filtered, here("intermediate-files","PreyMiFish_CF_TM_Wild_input_Obs_data.RDS"))
 
+combined_sample_data_filtered <- readRDS(here("intermediate-files","PreyMiFish_CF_TM_Wild_input_Obs_data.RDS"))
 ```
 
 
@@ -1236,104 +1126,16 @@ create_station_mapping <- function(observation_data) {
 station_mapping <- create_station_mapping(combined_sample_data_filtered)
 print(station_mapping)
 
-saveRDS(station_mapping, here("intermediate-files","Prey18S_observationData_stationMapping.RDS"))
-
+saveRDS(station_mapping, here("intermediate-files","PreyMF_observationData_stationMapping.RDS"))
+station_mapping <- readRDS(here("intermediate-files","PreyMF_observationData_stationMapping.RDS"))
 ```
 
-
-Modified formatting function 3
-```{r}
-# Modified formatting function with external station mapping
-format_metabarcoding_data <- function(input_metabarcoding_RDS, input_mock_comm_RDS, 
-                                     station_mapping, reference_species = "Actinopteri") {
-  require(tidyverse)
-  
-  Observation <- input_metabarcoding_RDS
-  Mock <- input_mock_comm_RDS
-  
-  # Process Mock data FIRST - join station_idx before using it
-  Mock <- Mock %>% 
-    group_by(Community) %>% 
-    mutate(station_idx = cur_group_id()) %>% 
-    ungroup() %>%
-    rename(Nreads = nReads) %>%
-    mutate(
-      time = 1,
-      creek = 1,
-      biol = 1,
-      station = station_idx,
-      stationname = Community
-    ) %>% 
-    replace(is.na(.), 0) %>% 
-    filter(start_prop > 0 & Nreads > 0 & !is.na(Nreads)) %>% 
-    unite(c(time, creek, station, biol, tech), col = "Sample", sep = ".", remove = FALSE)
-  
-  # Keep species present in both datasets
-  keepSpecies <- intersect(Mock$species, Observation$species)
-  Observation <- Observation %>% filter(species %in% keepSpecies)
-  Mock <- Mock %>% filter(species %in% keepSpecies)
-  
-  # Create species index with reference species as the last index
-  all_species <- unique(c(Mock$species, Observation$species))
-  
-  # Remove reference species from the main list
-  main_species <- setdiff(all_species, reference_species)
-  
-  # Create ordered species list: main species first, reference species last
-  ordered_species <- c(main_species, reference_species)
-  
-  # Create species index mapping
-  sp_list <- data.frame(
-    species = ordered_species,
-    species_idx = 1:length(ordered_species),
-    stringsAsFactors = FALSE
-  )
-  
-  # Process Mock data with the new species index
-  Mock <- Mock %>% 
-    left_join(sp_list, by = "species") %>% 
-    mutate(
-      speciesname = species,
-      species = species_idx
-    ) %>% 
-    group_by(station, tech, time, creek, biol) %>% 
-    mutate(b_proportion = start_prop/sum(start_prop)) %>% 
-    ungroup()
-  
-  # Process Observation data with the provided station mapping
-  Observation <- Observation %>% 
-    left_join(sp_list, by = "species") %>% 
-    mutate(
-      speciesname = species,
-      species = species_idx
-    ) %>% 
-    left_join(station_mapping, by = "stationname") %>% 
-    group_by(station, time, creek, biol) %>% 
-    mutate(
-      tech = match(tech, unique(tech)),
-      tot_reads = sum(Nreads)
-    ) %>% 
-    filter(tot_reads > 0) %>% 
-    ungroup() %>% 
-    dplyr::select(-tot_reads)
-  
-  # Return final object
-  list(
-    Observation = Observation,
-    Mock = Mock,
-    N_pcr_mock = unique(input_mock_comm_RDS$N_pcr_mock),
-    NSpecies = nrow(sp_list),
-    station_list = station_mapping,
-    sp_list = sp_list
-  )
-}
-```
 
 
 ```{r}
 qmdata <- format_metabarcoding_data(input_metabarcoding_RDS,input_mock_comm_RDS,
                           station_mapping = station_mapping,
-                          reference_species = "Actinopteri")
+                          reference_species = "Alosa sapidissima")
 
 
 obs <- qmdata
@@ -1380,171 +1182,6 @@ MOCK <- qmdata$Mock
 
 ```
 
-Modified ALR transform for model input formatting
-```{r}
-
-##### FIXED VERSION WITH spread() ####
-alrTransform <- function(MOCK){
-  require(tidyverse)
-  require(compositions)
-  
-  p_mock <- MOCK %>% 
-    dplyr::select(species, station, tech, b_proportion) %>% 
-    rename(tech_rep = tech) %>% 
-    spread(key = species, value = b_proportion, fill = 1e-9) %>%  # Use spread() instead
-    ungroup() 
-  
-  colnames(p_mock)[3:(length(unique(MOCK$species))+2)] <- paste0("alr_", 1:length(unique(MOCK$species)))
-  
-  p_mock <- alr(p_mock[,3:ncol(p_mock)]) %>% as.matrix() %>% as.data.frame()
-  p_mock[,length(unique(MOCK$species))] <- 0  #add reference zero expressly
-  names(p_mock)[length(unique(MOCK$species))] <- paste0("alr_", length(unique(MOCK$species)))
-  
-  p_mock <-  cbind(MOCK %>% dplyr::select(tech, station) %>% distinct(),
-                   p_mock) %>% ungroup()
-  names(p_mock)[1] <- "tech_rep"
-  
-  return(p_mock)
-}
-
-```
-We are going to split up the functions because as written in one giant script is making troubleshooting hard, later we can make them all into one Functions.R but for now let's keep them separate
-
-makeDesign function to create the input for the stan model running
-```{r}
-makeDesign <- function(obs, #obs is a named list with elements Observation, Mock, N_pcr_mock, sp_list
-                       N_pcr_cycles){ #N_pcr_cycles is the number of PCR cycles in your experimental/enviro samples; currently a single value, could be made into a vector if this number varies
-  #library(tidyverse)
-  library(MCMCpack)
-  library(compositions)
-  library(rstan)
-  library(dplyr)
-  
-  
-  mock <- obs$Mock
-  observed <- obs$Observation
-  
-  p_mock_all <- alrTransform(mock)
-  
-  mock_3 <- mock %>% 
-  dplyr::select(species, station, tech, Nreads) %>% 
-  ungroup() %>% 
-  mutate(species = paste0("sp_", species)) %>% 
-  pivot_wider(names_from = species, values_from = Nreads, 
-              values_fill = 0)  # FIXED: named list
-
-  N_pcr_mock <- rep(obs$N_pcr_mock, nrow(p_mock_all)) #assumes all have the same Npcr
-  
-  
-  p_samp_all <- observed %>% 
-    ungroup() %>% 
-    unite(time, creek, station, biol, col = "station") %>% 
-    dplyr::select(station, tech, species, Nreads) %>% 
-    rename(tech_rep = tech) %>% 
-    mutate(species = paste0("sp_", species)) %>% 
-    arrange(species) %>% 
-    group_by(station, tech_rep,species) %>% 
-    dplyr::summarise(Nreads= sum(Nreads)) %>% 
-    ungroup() %>% 
-   pivot_wider(names_from = species, values_from = Nreads, 
-              values_fill = 0)
-  N_pcr_samp <- rep(N_pcr_cycles, nrow(p_samp_all))
-  
-  ########################################################################
-  #### Create data frames that can be read into Stan model
-  ########################################################################
-  
-  NOM <- as.name(colnames(p_mock_all)[1])
-  formula_a <- eval(NOM) ~ N_pcr_mock -1
-  model_frame <- model.frame(formula_a, p_mock_all)
-  model_vector_a_mock <- model.matrix(formula_a, model_frame) %>% as.numeric()
-  N_pcr_mock_small <- cbind(N_pcr_mock, p_mock_all) %>%  filter(tech_rep == 1) %>% pull(N_pcr_mock)
-  formula_b <- eval(NOM) ~ N_pcr_mock_small -1
-  model_frame <- model.frame(formula_b, p_mock_all%>% filter(tech_rep==1))
-  model_vector_a_mock_small <- model.matrix(formula_b, model_frame) %>% as.numeric()
-  
-  N_obs_mock       <- nrow(p_mock_all)
-  
-  # unknown communities second
-  # species compositions (betas)
-  
-  NOM <- as.name(colnames(p_samp_all)[1])    
-  
-  p_samp_all$station <- as.factor(p_samp_all$station)
-  N_station = length(unique(p_samp_all$station))
-  p_samp_all$tech_rep <- as.factor(p_samp_all$tech_rep)
-  if(N_station == 1){
-    formula_b <- eval(NOM) ~ 1  
-  } else {
-    formula_b <- eval(NOM) ~ station
-  }
-  
-  model_frame <- model.frame(formula_b, p_samp_all)
-  model_matrix_b_samp <- model.matrix(formula_b, model_frame)
-  
-  # choose a single representative for each station to make predictions to
-  model_frame <- model.frame(formula_b, p_samp_all %>% filter(tech_rep==1))
-  model_matrix_b_samp_small <- model.matrix(formula_b, model_frame)
-  
-  # efficiencies (alpha)
-  formula_a <- eval(NOM) ~ N_pcr_samp -1
-  model_frame <- model.frame(formula_a, p_samp_all)
-  model_vector_a_samp <- model.matrix(formula_a, model_frame) %>% as.numeric()
-  N_pcr_samp_small <- cbind(N_pcr_samp, p_samp_all) %>% filter(tech_rep == 1) %>% pull(N_pcr_samp)
-  formula_b <- eval(NOM) ~ N_pcr_samp_small -1
-  
-  model_frame <- model.frame(formula_b, p_samp_all %>% filter(tech_rep==1))
-  model_vector_a_samp_small <- model.matrix(formula_b, model_frame) %>% as.numeric()
-  
-  #counters 
-  N_obs_samp_small <- nrow(model_matrix_b_samp_small)
-  N_obs_samp <- nrow(p_samp_all)
-  N_b_samp_col <- ncol(model_matrix_b_samp)
-  
-  
-  #### Make Stan objects
-  
-  stan_data <- list(
-    N_species = ncol(p_samp_all)-2,   # Number of species in data
-    N_obs_samp = nrow(p_samp_all), # Number of observed community samples and tech replicates ; this will be Ncreek * Nt * Nbiol * Ntech * 2 [for upstream/downstream observations]
-    N_obs_mock = nrow(p_mock_all), # Number of observed mock samples, including tech replicates
-    N_obs_samp_small = nrow(p_samp_all %>% filter(tech_rep == 1)), # Number of unique observed community samples ; this will be Ncreek * Nt * Nbiol * 2 [for upstream/downstream observations]
-    
-    # Observed data of community matrices
-    sample_data = p_samp_all %>% dplyr::select(contains("sp")),
-    sample_vector = unique(p_samp_all$station),
-    mock_data   = mock_3 %>% dplyr::select(contains("sp")),
-    sp_list = obs$sp_list,
-    
-    # True proportions for mock community
-    #mock_true_prop = p_mock_all %>% dplyr::select(contains("sp")),
-    alr_mock_true_prop = p_mock_all %>% dplyr::select(contains("alr")),
-    
-    # vectors of PCR numbers
-    N_pcr_samp = N_pcr_samp,
-    N_pcr_mock = N_pcr_mock,
-    
-    # Design matrices: field samples
-    N_b_samp_col = N_b_samp_col,
-    model_matrix_b_samp = model_matrix_b_samp,
-    model_matrix_b_samp_small = as.array(model_matrix_b_samp_small),
-    model_vector_a_samp = model_vector_a_samp,
-    model_vector_a_samp_small = as.array(model_vector_a_samp_small),
-    
-    # Design matrices: mock community samples
-    model_vector_a_mock = as.array(model_vector_a_mock),
-    
-    # Priors
-    alpha_prior = c(0,0.5),  # normal prior
-    beta_prior = c(0,5),    # normal prior
-    tau_prior = c(1,2)   # gamma prior
-  )
-  
-  return(stan_data)
-  
-}
-
-```
 
 Running the nested functions
 ```{r}
@@ -1592,7 +1229,7 @@ QM_likelihood <- function(stanmodelname, stan_metabarcoding_data){
 
 ML_out <- QM_likelihood(here("scripts","models","quant_metabar_rosetta_noSampleEta.stan"), stan_metabarcoding_data)
 
-write_rds(ML_out, here("intermediate-files","Test5_NoTMMock_20250822_ML_out.RDS"))
+write_rds(ML_out, here("intermediate-files","MiFish_test1_08282025_ML_out.RDS"))
 
 ```
 
@@ -1671,7 +1308,7 @@ ggplot(plot_data_CF, aes(x = biol, fill = species, y = proportion)) +
 
 
 
-ggsave(here("Figures","20250821_ctrlfeeding_proportions_after_qm_ML.png"), width = 18, height = 10, units = "cm")
+ggsave(here("Figures","CorrectionBiasRun","20250828_MF_ctrlfeeding_proportions_after_qm_ML.png"), width = 18, height = 10, units = "cm")
 
 
 # Plot
@@ -1686,7 +1323,7 @@ ggplot(plot_data_TM, aes(x = biol, fill = species, y = proportion)) +
   facet_grid(sampletype ~ stationname + time, scales = "free_x", space = "free") +
   guides(fill = guide_legend(ncol = 3))
 
-ggsave(here("Figures","20250821_TM_proportions_after_qm_ML.png"), width = 18, height = 10, units = "cm")
+ggsave(here("Figures","20250828_MF_TM_proportions_after_qm_ML.png"), width = 18, height = 10, units = "cm")
 
 
 ```
@@ -1750,7 +1387,7 @@ print(head(stan_metabarcoding_data$model_vector_a_samp))
 
 
 ```{r}
-QM_bayes <- function(stanmodelname, stan_metabarcoding_data, NCHAINS = 4, WARMUP = 1000, ITER = 4000){
+QM_bayes <- function(stanmodelname, stan_metabarcoding_data, NCHAINS = 4, WARMUP = 1000, ITER = 5000){
   require(tidyverse)
   require(rstan)
   rstan_options(auto_write = TRUE)
@@ -1839,12 +1476,12 @@ In summary: You run the model twice. First, quickly, to get a point estimate (ML
 
 bayes_out <- QM_bayes(here("scripts","models","quant_metabar_rosetta_noSampleEta.stan"), stan_metabarcoding_data)
 
-saveRDS(bayes_out, here("intermediate-files","20250824_bayesout_ControlFeedingTMWildScats.RDS"))
+saveRDS(bayes_out, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats.RDS"))
 
 summaryout <- summary(bayes_out$Bayes_modelfit)$summary
-write.csv(summaryout, here("intermediate-files","20250824_bayesout_ControlFeedingTMWildScats_summary.csv"))
+write.csv(summaryout, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_summary.csv"))
 
-bayes_out <- readRDS( here("intermediate-files","20250824_bayesout_ControlFeedingTMWildScats.RDS"))
+bayes_out <- readRDS( here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats.RDS"))
 
 bayes_out$Bayes_alpha_est
 bayes_out$Bayes_estimates %>%
@@ -1866,16 +1503,16 @@ bayes_out$Bayes_modelfit
 
 ```
 
-The model is struggling. The very low n_eff and high Rhat values for a few species in your bayes_out printout are major red flags. Suggests that species 1,5, and 9 may be causing issues (Nereididae,Rajidae, and Cephalopoda respectively) This indicates the MCMC chains did not converge properly. The results cannot be trusted if convergence is bad, so we need to modify the inputs and be more conservative with species. This is likely due to a mismatch between model and data, too vague priors, or an overly complex model for the data at hand, we need more data so we should bring in wild samples, but we definitely need to 
+The model is struggling. The very low n_eff and high Rhat values for a few species in your bayes_out printout are major red flags. 
 
 ```{r}
 # 4. Run the model with the COMBINED mock data and the NEW station_mapping
-combined_model_result <- run_QM_model(
+bayes_out_2 <- run_QM_model(
   input_metabarcoding_RDS = input_metabarcoding_RDS,
   input_mock_comm_RDS = combined_mock, # Use the combined mock
   N_pcr_cycles = 39,
   station_mapping = combined_station_mapping, # Use the NEW mapping for mocks
-  reference_species = "Actinopteri",
+  reference_species = "Clupea pallasii",
   stanmodel = "quant_metabar_rosetta_noSampleEta.stan",
   method = "Bayes") # or "ML"
 
@@ -1933,7 +1570,7 @@ glimpse(int_samp_small_tibble)
 # You can see the structure now includes both the full sample name and the station name
 head(int_samp_small_tibble)
 
-saveRDS(int_samp_small_tibble, here("intermediate-files","CorrectionBiasRun","20250824_bayesout_ControlFeedingTMWildScats_int_samp_small_tibble.RDS"))
+saveRDS(int_samp_small_tibble, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_int_samp_small_tibble.RDS"))
 
 ```
 
@@ -2047,7 +1684,7 @@ species_summary <- summary_bayes_out$species_summary
 plotting_data <- summary_bayes_out$plotting_data
 
 # Save the plotting data as in your example
-saveRDS(plotting_data, here("intermediate-files","CorrectionBiasRun", "20250824_bayesout_ControlFeedingTMWildScats_qm_data_plotting.rds"))
+saveRDS(plotting_data, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_qm_data_plotting.rds"))
 
 # Check the results
 glimpse(plotting_data)
@@ -2058,19 +1695,11 @@ head(species_summary)
 
 ```{r}
 # Save the other summary results
-saveRDS(mean_estimates, here("intermediate-files","CorrectionBiasRun", "20250824_bayesout_ControlFeedingTMWildScats_qm_mean_estimates.rds"))
-saveRDS(summary_stats, here("intermediate-files","CorrectionBiasRun", "20250824_bayesout_ControlFeedingTMWildScats_qm_samp_small_summary_stats.rds"))
-saveRDS(species_summary, here("intermediate-files","CorrectionBiasRun", "20250824_bayesout_ControlFeedingTMWildScats_qm_species_summary.rds"))
-saveRDS(full_posterior, here("intermediate-files","CorrectionBiasRun", "20250824_bayesout_ControlFeedingTMWildScats_full_posterior.rds"))
+saveRDS(mean_estimates, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_qm_mean_estimates.rds"))
+saveRDS(summary_stats, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_qm_samp_small_summary_stats.rds"))
+saveRDS(species_summary, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_qm_species_summary.rds"))
+saveRDS(full_posterior, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_full_posterior.rds"))
 
-# Quick visualization
-ggplot(summary_stats, aes(x = species, y = mean_prop, color = stationname)) +
-  geom_point(position = position_dodge(width = 0.5)) +
-  geom_errorbar(aes(ymin = lower_95, ymax = upper_95), 
-                position = position_dodge(width = 0.5), width = 0.2) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(title = "Posterior estimates of species proportions by station",
-       x = "Species", y = "Estimated proportion")
 ```
 
 Modified plotting functions to make it more streamline across runs and models
