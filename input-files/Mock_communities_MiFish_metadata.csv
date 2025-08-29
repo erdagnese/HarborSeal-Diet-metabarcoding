@@ -1,0 +1,83 @@
+Target_species,MiFish_taxon_assign,Species,Common_name,Sample_ID,start_conc_ng_ul,Even_prop,Even_mass_ng,Even_vol_sample,Even_calc_conc,SK1_prop,SK1_mass_ng,SK1_vol,SK1_calc_conc,SK2_prop,SK2_mass_ng,SK2_vol,SK2_calc_conc
+NSpearPoach,Agonopsis vulsa,Agonopsis vulsa,Northern Spearnose Poacher,01_NorSpPoach,0.343,0.0132,10,29.15,0.02556655093,,,,0,,,,
+AmShad,Alosa sapidissima,Alosa sapidissima,American shad,01_AmShad_B,5.03,0.0132,10,1.99,0.02556655093,0.012,6,1.19,0.0346450242,0.05,25,4.97,0.1443542675
+PacSanLan,Ammodytes personatus,Ammodytes personatus,Pacific sandlance,01_PacSand,2.81,0.0132,10,3.56,0.02556655093,,,,0,0.032,16,5.69,0.09238673121
+Cockscomb,Anoplarchus,Anoplarchus purpurescens,High Cockscomb,11_HCcomb,1.42,0.0132,10,7.04,0.02556655093,0.012,6,4.23,0.0346450242,,,,0
+SpotBarr,Arctozenus risso,Arctozenus risso,Spotted barracudina,01_SpotBarr_B,2.35,0.0132,10,4.26,0.02556655093,,,,0,0.012,6,2.55,0.0346450242
+PadSculp,Artedius fenestralis,Artedius fenestralis,Padded sculpin,PadSculp_02,3.55,0.0132,10,2.82,0.02556655093,0.012,6,1.69,0.0346450242,,,,0
+SmoothSculp,Artedius lateralis,Artedius lateralis,Smoothhead sculpin,01_SmoothSculp_B,4.02,0.0132,10,2.49,0.02556655093,,,,0,0.012,6,1.49,0.0346450242
+Tsnout,Aulorhynchus flavidus,Aulorhynchus flavidus,Tubesnout,01_Tsnout_B,5.21,0.0132,10,1.92,0.02556655093,,,,0,0.012,6,1.15,0.0346450242
+LnoseSkate,Beringraja rhina,Beringraja rhina,Longnose skate,01_LnoseSkate_B,4.01,0.0132,10,2.49,0.02556655093,0.05,25,6.23,0.1443542675,,,,0
+RBratula,Brosmophycis marginata,Brosmophycis marginata,Red brotula,01_RBratula_B,4.13,0.0132,10,2.42,0.02556655093,,,,0,0.012,6,1.45,0.0346450242
+DecWarb,Chirolophis,Chirolophis decoratus,Decorated warbonnet,01_DecWarb_B,5.96,0.0132,10,1.68,0.02556655093,0.012,6,1.01,0.0346450242,,,,0
+RoughSculp,Chitonotus pugetensis,Chitonotus pugetensis,Roughback sculpin,01_RoughSculp,3.12,0.0132,10,3.21,0.02556655093,,,,0,0.012,6,1.92,0.0346450242
+PacSanddab,Citharichthys sordidus,Citharichthys sordidus,Pacific sanddab,02_PacSanddab,5.19,0.0132,10,1.93,0.02556655093,0.012,6,1.16,0.0346450242,,,,0
+SpecSdab,Citharichthys stigmaeus,Citharichthys stigmaeus,Speckled sanddab,01_SpecsDab,3.23,0.0132,10,3.1,0.02556655093,,,,0,0.012,6,1.86,0.0346450242
+ArrGob,Clevelandia ios,Clevelandia ios,Arrow goby,01_ArrGob_B,4.29,0.0132,10,2.33,0.02556655093,,,,0,,,,0
+PacHer,Clupea pallasii,Clupea pallasii,Pacific herring,14_PacHer,4.52,0.0132,10,2.21,0.02556655093,0.05,25,5.53,0.1443542675,0.012,6,1.33,0.0346450242
+ShinPer,Cymatogaster aggregata,Cymatogaster aggregata,Shiner perch,01_ShinPer,2.63,0.0132,10,3.8,0.02556655093,,,,0,0.05,25,9.51,0.1443542675
+CalHeadl,Diaphus theta,Diaphus theta,California headlightfish,,2,0.0132,10,,0.02556655093,,,,0,,,,0
+SPerch,Embiotoca lateralis,Embiotoca lateralis,Striped seaperch,01_StripedSPer_B,4.16,0.0132,10,2.4,0.02556655093,,,,0,0.012,6,1.44,0.0346450242
+NAnch,Engraulis mordax,Engraulis mordax,Northern anchovy,01_NAnch,4.46,0.0132,10,2.24,0.02556655093,0.032,16,3.59,0.09238673121,,,,0
+BufSculp,Enophrys bison,Enophrys bison,Buffalo sculpin,01_BufSculp,0.327,0.0132,10,30.58,0.02556655093,,,,0,0.032,16,48.93,0.09238673121
+PacLamp,Lampetra,Entosphenus tridentatus (Lampetra genus),Pacific lamprey,01_PacLamp_B,4.01,0.0132,10,2.49,0.02556655093,0.012,6,1.5,0.0346450242,,,,0
+Ej,Eumatopias jubatus,Eumatopias jubatus,Steller Sea lion,StellerSeaLion,0.786,0.0132,10,12.72,0.02556655093,,,,0,0.012,6,7.63,0.0346450242
+PSLump,Eumicrotremus orbis,Eumicrotremus orbis,Pacific spiny lumpsucker,01_PSLump_B,4.61,0.0132,10,2.17,0.02556655093,0.032,16,3.47,0.09238673121,,,,0
+WalPol,Gadus chalcogrammus,Gadus chalcogrammus,Walleye pollock,01_WalPol,3.99,0.0132,10,2.51,0.02556655093,0.05,25,6.27,0.1443542675,,,,0
+PacCod,Gadus macrocephalus,Gadus macrocephalus,Pacific cod/grey harbor,01_PacCod_B,5.91,0.0132,10,1.69,0.02556655093,0.05,25,4.23,0.1443542675,,,,0
+3SpinStick,Gasterosteus aculeatus,Gasterosteus aculeatus,Three-spined stickleback,01_3SpinStick_01,3.37,0.0132,10,2.97,0.02556655093,0.032,16,4.75,0.09238673121,,,,0
+RexSol,Glyptocephalus zachirus,Glyptocephalus zachirus,Rex sole,01_RexSol,0.992,0.0132,10,10.08,0.02556655093,,,,0,0.032,16,16.13,0.09238673121
+NCling,Gobiesox maeandricus,Gobiesox maeandricus,Northern  Clingfish,01_NCling,3.24,0.0132,10,3.09,0.02556655093,,,,0,,,,0
+RIrishL,Hemilepidotus hemilepidotus,Hemilepidotus hemilepidotus,Red Irish Lord,01_RIrishL_B,3.95,0.0132,10,2.53,0.02556655093,,,,0,0.032,16,4.05,0.09238673121
+WhitGreen,Hexagrammos stelleri,Hexagrammos stelleri,Whitespotted greenling,01_WhitGreen,4.35,0.0132,10,2.3,0.02556655093,,,,0,,,,0
+FltHdSol,Hippoglossoides,Hippoglossoides elassodon,Flathead sole,01_FltHdSol,1.38,0.0132,10,7.25,0.02556655093,,,,0,0.05,25,18.12,0.1443542675
+Ratfish,Hydrolagus colliei,Hydrolagus colliei,Ratfish,02_Ratfish,1.57,0.0132,10,6.37,0.02556655093,0.032,16,10.19,0.09238673121,,,,0
+SurfSmel,Hypomesus pretiosus,Hypomesus pretiosus,Surf smelt,01_SurfSmel,4.12,0.0132,10,2.43,0.02556655093,,,,0,0.032,16,3.88,0.09238673121
+NorSculp,Icelinus borealis,Icelinus borealis,Northern sculpin,01_NorSculp_B,4.06,0.0132,10,2.46,0.02556655093,,,,0,,,,0
+RivLamp,Lampetra,Lampetra fluviatilis,river lamprey?,01_RivLamp,0.604,0,,,0,,,,0,,,,0
+BayGob,Lepidogobius lepidus,Lepidogobius lepidus,Bay goby,01_BayGob,4.23,0.0132,10,2.36,0.02556655093,,,,0,,,,0
+Rcksol,Lepidopsetta,Lepidopsetta bilineata,Rock sole,01_RckSol,4.06,0.0132,10,2.46,0.02556655093,,,,0,0.012,6,1.48,0.0346450242
+PstahSculp,Leptocottus armatus,Leptocottus armatus,Pacific staghorn sculpin,01_PStahSculp,3.44,0.0132,10,2.91,0.02556655093,0.05,25,7.27,0.1443542675,,,,0
+MarbSnail,Liparis,Liparis dennyi,Marbled snailfish,01_MarbSnail_B,0.077,0,,,0,,,,0,,,,0
+SlipSnail,Liparis fucensis,Liparis fucensis,Slipskin snailfish,01_SlipSnail,3.8,0.0132,10,2.63,0.02556655093,,,,0,0.032,16,4.21,0.09238673121
+ShowSnail,Liparis pulchellus,Liparis pulchellus,Showy snailfish,01_ShowSnail,4.47,0,,,0,,,,0,,,,0
+SnakPrick,Lumpenus sagitta,Lumpenus sagitta,Snake prickleback,01_SnakPrick,0.82,0.0132,10,12.2,0.02556655093,0.012,6,7.32,0.0346450242,,,,0
+BlkEelpt,Lycodes,Lycodes pacificus,Blackbelly eelpout,01_BlkEelpt,1.65,0.0132,10,6.06,0.02556655093,,,,0,0.012,6,3.64,0.0346450242
+SlendSol,Lyopsetta exilis,Lyopsetta exilis,Slender sole,03_SlendSol,1.74,0.0132,10,5.75,0.02556655093,,,,0,0.05,25,14.37,0.1443542675
+Hake,Merluccius productus,Merluccius productus,Hake,01_Hake,4.49,0.0132,10,2.23,0.02556655093,0.05,25,5.57,0.1443542675,0.032,16,3.56,0.09238673121
+PacTom,Microgadus proximus,Microgadus proximus,Pacific tomcod,01_PacTom,4.5,0.0132,10,2.22,0.02556655093,,,,0,0.05,25,5.56,0.1443542675
+DovSol,Microstomus pacificus,Microstomus pacificus,Dover sole,02_DovSol,2.42,0.0132,10,4.13,0.02556655093,0.032,16,6.61,0.09238673121,,,,0
+GrtSculp,Myoxocephalus,Myoxocephalus polycanthocephalus,Great sculpin,01_GrtSculp,1.92,0.0132,10,5.21,0.02556655093,,,,0,,,,0
+SailSculp,Nautichthys oculofasciatus,Nautichthys oculofasciatus,Sailfin sculpin,01_SailSculp,3.91,0.0132,10,2.56,0.02556655093,,,,0,,,,0
+TpoolSculp,Oligocottus,Oligocottus maculosus,Tidepool sculpin,TpoolSculp_01,4.23,0.0132,10,2.36,0.02556655093,,,,0,,,,0
+PnkSal,Oncorhynchus gorbuscha,Oncorhynchus gorbuscha,Pink salmon,01_PinkSal,2.52,0.0132,10,3.97,0.02556655093,0.012,6,2.38,0.0346450242,0.032,16,6.35,0.09238673121
+ChumSal,Oncorhynchus keta,Oncorhynchus keta,Chum salmon,01_ChumSal_dil,5.13,0.0132,10,1.95,0.02556655093,0.032,16,3.12,0.09238673121,0.05,25,4.87,0.1443542675
+CohoSal,Oncorhynchus kisutch,Oncorhynchus kisutch,Coho salmon,01_CohoSal,5.25,0.0132,10,1.9,0.02556655093,0.012,6,1.14,0.0346450242,0.05,25,4.76,0.1443542675
+SteelHd,Oncorhynchus mykiss,Oncorhynchus mykiss,Steelhead,01_SteelHd,3.11,0.0132,10,3.22,0.02556655093,,,,0,0.05,25,8.04,0.1443542675
+SockSal,Oncorhynchus nerka,Oncorhynchus nerka,Sockeye salmon,01_SockSal,2.57,0.0132,10,3.89,0.02556655093,0.032,16,6.23,0.09238673121,,,,0
+ChinSal,Oncorhynchus tshawytscha,Oncorhynchus tshawytscha,Chinook salmon,01_ChinSal,3.52,0.0132,10,2.84,0.02556655093,0.012,6,1.7,0.0346450242,0.05,25,7.1,0.1443542675
+Lingcod,Ophiodon elongatus,Ophiodon elongatus,Lingcod,03_Lingcod,1.65,0.0132,10,6.06,0.02556655093,0.012,6,3.64,0.0346450242,0.05,25,15.15,0.1443542675
+EngSol,Parophrys vetulus,Parophrys vetulus,English sole,02_EngSol,0.83,0.0132,10,12.05,0.02556655093,,,,0,,,,0
+Pompano,Peprilus,Peprilus simillimus,Pacific pompano,01_PacPomp_B,1.28,0.0132,10,7.81,0.02556655093,,,,0,,,,0
+Pv,Phoca,Phoca vitulina,Harbor Seal,WDFW_2023_160248,4.71,0.0132,10,2.12,0.02556655093,0.012,6,1.27,0.0346450242,,,,0
+CresGun,Pholis laeta,Pholis laeta,Crescent gunnel,01_CresGun,2.75,0.0132,10,3.64,0.02556655093,,,,0,,,,0
+SaddleGun,Pholis ornata,Pholis ornata,Saddleback gunnel,02_SaddleGun,4.64,0.0132,10,2.16,0.02556655093,0.012,6,1.29,0.0346450242,,,,0
+StarFloun,Platichthys,Platichthys stellatus,Starry flounder,01_StarFloun,0.548,0.0132,10,18.25,0.02556655093,,,,0,0.032,16,29.2,0.09238673121
+COSol,Pleuronichthys coenosus,Pleuronichthys coenosus,C-O sole,02_COSol,1.51,0.0132,10,6.62,0.02556655093,,,,0,,,,0
+SturPoach,Podothecus accipenserinus,Podothecus accipenserinus,Sturgeon Poacher,02_SturPoach,2.13,0.0132,10,4.69,0.02556655093,,,,0,,,,0
+PlfinMid,Porichthys notatus,Porichthys notatus,Plainfin midshipman,01_PlfinMid,4.17,0.0132,10,2.4,0.02556655093,0.032,16,3.84,0.09238673121,0.012,6,1.44,0.0346450242
+SlimSculp,Radulinus asprellus,Radulinus asprellus,Slim sculpin,01_SlimSculp_B,3.36,0.0132,10,2.98,0.02556655093,,,,0,,,,0
+BSkate,Raja binoculata,Raja binoculata,Big skate,01_Bskate_B,4.83,0.0132,10,2.07,0.02556655093,0.032,16,3.31,0.09238673121,,,,0
+NorRonq,Ronquilus jordani,Ronquilus jordani,Northern ronquil,01_NorRonq_B,4.86,0.0132,10,2.06,0.02556655093,,,,0,,,,0
+AtlSal,Salmo salar,Salmo salar,Atlantic salmon,01_ AtlSal,5.38,0.0132,10,1.86,0.02556655093,0.012,6,1.12,0.0346450242,,,,0
+BrRckFish,Sebastes,Sebastes auriculatus,Brown Rockfish,01_BrRock_B,0.17,0,0,0,0,,,,0,,,,0
+CURock,Sebastes,Sebastes caurinus,Copper rockfish,01_CURock_B,1.61,0,0,0,0,0.032,16,9.94,0.09238673121,,,,0
+QuilRock,Sebastes,Sebastes maliger,Quillback rockfish,01_QuilRock_B,5.91,0,0,0,0,0.012,6,1.02,0.0346450242,,,,0
+BlkRock,Sebastes,Sebastes melanops,Black rockfish,01_BlkRock_B,1.64,0,0,0,0,,,,0,,,,0
+CanRock,Sebastes,Sebastes pinniger,Canary Rockfish,01_CanRock_B,4.45,0.0132,10,2.25,0.02556655093,0.05,25,5.62,0.1443542675,,,,0
+LfinSmel,Spirinchus thaleichthys,Spirinchus thaleichthys,Longfin smelt,01_Lfsmelt,1.01,0.0132,10,9.9,0.02556655093,,,,0,0.012,6,5.94,0.0346450242
+SpDog,Squalus suckleyi,Squalus  suckleyi,Spiny-dogfish,01_SpDog,4.65,0.0132,10,2.15,0.02556655093,0.05,25,5.38,0.1443542675,,,,0
+VAQCapelin,Mallotus villosus,Mallotus villosus,Capelin,01_Capelin_VAQ,4.22,0.0132,10,2.37,0.02556655093,0.05,25,5.92,0.1443542675,,,,0
+BayPip,Syngnathus leptorhynchus,Syngnathus leptorhynchus,bay pipe fish,01_BayPip,3.55,0.0132,10,2.82,0.02556655093,,,,0,,,,0
+Eulach,Thaleichthys pacificus,Thaleichthys pacificus,Eulachon,01_Eulach_B,0.725,0.0132,10,13.79,0.02556655093,0.05,25,34.48,0.1443542675,0.012,6,8.28,0.0346450242
+Zalophus,Zalophus,Zalophus californianus,California Sea lion,CalSeaLion,5.05,0.0132,10,1.98,0.02556655093,,,,0,0.032,16,3.17,0.09238673121

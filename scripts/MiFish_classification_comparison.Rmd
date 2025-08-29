@@ -17,20 +17,13 @@ library(vegan)
 library(janitor)
 ```
 
-Bring in the ASV table 
-```{r pull in biom and make ASV table and bring in metadata}
-MiFishBiom <- read_biom(here("data","CorrectionBias","tourmaline-CorBias_MiFish_16072025","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
-
-MiFishASV <- as.matrix(MiFishBiom$counts)
-MiFishASV %>%
-  as.data.frame() %>%
-  tibble::rownames_to_column( ., "hash.id") -> MiFishASV
-
-MiFishMD <- read_tsv(here("data","CorrectionBias","tourmaline-CorBias_MiFish_16072025","00-data", "metadata.tsv"))
-```
 
 Now bring in all the different classifications to compare
 ```{r}
+local_MF_tax <- read_tsv(here("data","Wild_CB_Samples","tourmaline-MiFish_CB2_12122024","02-output-dada2-pe-unfiltered","01-taxonomyLocalZG","taxonomy.tsv"))
+
+global_MF_tax <- read_tsv(here("data","Wild_CB_Samples","tourmaline-MiFish_CB2_12122024","02-output-dada2-pe-unfiltered","01-taxonomyUniversal","taxonomy.tsv"))
+
 local_MF_tax <- read_tsv(here("data","CorrectionBias","tourmaline-CorBias_MiFish_16072025","02-output-dada2-pe-unfiltered","01-taxonomyLocalZG","taxonomy.tsv"))
 
 global_MF_tax <- read_tsv(here("data","CorrectionBias","tourmaline-CorBias_MiFish_16072025","02-output-dada2-pe-unfiltered","01-taxonomyUniversal","taxonomy.tsv"))
@@ -64,7 +57,10 @@ mf_compare_summary
 mf_compare %>%
   select(featureid, final_taxonomy) -> MiFish_TaxAssign
 
-write.table(MiFish_TaxAssign, here("intermediate-files","CorrectionBiasRun","MiFish","MiFish_final_Taxonomy.tsv"), quote=FALSE, sep='\t', col.names = TRUE, row.names = FALSE)
+
+write.table(MiFish_TaxAssign, here("intermediate-files","CorrectionBiasRun","MiFish","final_taxonomy_CorBias_MiFish.tsv"), quote=FALSE, sep='\t', col.names = TRUE, row.names = FALSE)
+
+write.table(MiFish_TaxAssign, here("intermediate-files","Wild_CB_Samples","final_taxonomy_Wild_CB2_MiFish.tsv"), quote=FALSE, sep='\t', col.names = TRUE, row.names = FALSE)
 
 ```
 

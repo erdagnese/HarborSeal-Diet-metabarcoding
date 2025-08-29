@@ -83,7 +83,7 @@ compare_taxonomy_tables <- function(localTAX, globalTAX) {
     dplyr::rename("global" = "Taxon", "ConfidenceGlob" = "Confidence")
   
   # Combine tables and calculate additional fields
-  tax_compare <- left_join(localTAX, globalTAX, by = "feature_id") %>%
+  tax_compare <- left_join(localTAX, globalTAX, by = "featureid") %>%
     mutate(
       # Clean taxonomy strings
       local_clean = map_chr(local, clean_taxonomy),
@@ -126,6 +126,24 @@ compare_taxonomy_tables <- function(localTAX, globalTAX) {
       rule_applied = if_else(
         is.na(rule_applied) & (local_clean == global_clean | species_match),
         "Rule 01: Exact or species-level match",
+        rule_applied
+      ),
+      
+      # -------------------------------------------------------------------------
+      # NEW RULE 1.5: Local has species-level identification (rank 7) with decent confidence
+      # -------------------------------------------------------------------------
+      final_taxonomy = if_else(
+        is.na(final_taxonomy) & 
+          local_rank == 7 & 
+          ConfidenceLoc >= 0.85,  # Reasonable confidence for species level
+        local_clean,
+        final_taxonomy
+      ),
+      rule_applied = if_else(
+        is.na(rule_applied) & 
+          local_rank == 7 & 
+          ConfidenceLoc >= 0.85,
+        "Rule 01.5: Local species-level identification",
         rule_applied
       ),
       

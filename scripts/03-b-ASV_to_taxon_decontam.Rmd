@@ -27,15 +27,17 @@ tax <- read.csv(here("intermediate-files","CorrectionBiasRun","final_taxonomy_Co
 metadata <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","00-data","metadata.tsv"), sep = "\t", header = T)
 
 # for mifish
-tax <- read_tsv(here("intermediate-files","CorrectionBiasRun","MiFish","MiFish_final_Taxonomy.tsv"))
+tax <- read_tsv(here("intermediate-files","CorrectionBiasRun","MiFish","final_taxonomy_CorBias_MiFish.tsv"))
 MiFishBiom <- read_biom(here("data","CorrectionBias","tourmaline-CorBias_MiFish_16072025","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
-
 
 
 metadata <- read.table(here("data","CorrectionBias","tourmaline-CorBias_MiFish_16072025","00-data", "metadata.tsv"), sep = "\t", header = T)
 
+tax <- read_tsv(here("intermediate-files","Wild_CB_Samples","final_taxonomy_Wild_CB2_MiFish.tsv"))
+MiFishBiom <- read_biom(here("data","Wild_CB_Samples","tourmaline-MiFish_CB2_12122024","02-output-dada2-pe-unfiltered","00-table-repseqs", "table.biom"), tree = FALSE, prune = FALSE)
 
-#MiFishMD <- read_tsv(here("PvDietMarkerTest","tourmaline-MiFish-20230130","00-data", "metadata.tsv"))
+
+metadata <- read.table(here("data","Wild_CB_Samples","tourmaline-MiFish_CB2_12122024","00-data", "metadata.tsv"), sep = "\t", header = T)
 ```
 
 formatting the ASV table
@@ -57,7 +59,7 @@ determine which ASVs from the positive control are in other the samples due to t
 source("Function_decontam_ASV.R")
 #for 18S the initial ones used kangaroo which only gets to mammal assignment so we are going to have to be creative, for ASVs that have few reads in anything other than the pos control
 #usage is the asv then the samples that are the positive control samples
-posCtrlasv <- posctrl_decontam_data(asv, c("Plate3_H12","PosCtrl_Kangaroo_MF4"))
+posCtrlasv <- posctrl_decontam_data(asv, c("PosCtrl_1","Plate3_H12"))
 # look at the sum reads and max reads to determine if the positive control specific ASVs that aren't abundant due to the kangaroo/mammal resolution issue, if there are no reads in other samples, we can assume that tag jumping is negligible
 ```
 
@@ -65,6 +67,11 @@ So now we need to  modify the taxonomy for the mammals and fish in the 18S, for 
 ```{r}
 modified_tax <- resolution_18S_tax(tax)
 tax <- modified_tax
+
+#tax %>% dplyr::rename("final_taxonomy"="Taxon") %>% dplyr::rename("featureid"="feature_id") -> tax
+modified_tax <- resolution_MiFish_tax(tax)
+tax <- modified_tax
+
 ```
 
 merge with tax table
@@ -93,8 +100,9 @@ taxon_table_wide <- taxon_table_summarized %>%
 # View the result
 print(taxon_table_wide)
 
-write.csv(taxon_table_wide, file = here::here("intermediate-files", "CorBias_MiFish_taxon_decontam_asv_table.csv") , row.names = F)
+write.csv(taxon_table_wide, file = here::here("intermediate-files", "CorrectionBiasRun","CorBias_MiFish_taxon_decontam_asv_table.csv") , row.names = F)
 #write.csv(taxon_table_wide, "Test_MiFish_taxon_decontam_table.csv", row.names = F)
+write.csv(taxon_table_wide, file = here::here("intermediate-files", "Wild_CB_Samples","Wild_CB2_MiFish_taxon_decontam_asv_table.csv") , row.names = F)
 ```
 
 okay we need to try to solve the ratfish issue... let's find all the ASVs that only occur in the Ratfish TMs and the mock communities

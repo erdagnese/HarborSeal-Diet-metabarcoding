@@ -70,6 +70,17 @@ resolution_18S_tax <- function(tax) {
     ))
 }
 
+
+resolution_MiFish_tax <- function(tax) {
+  tax %>%
+    mutate(final_taxonomy = case_when(
+      str_starts(final_taxonomy, "Eukaryota;Chordata;Mammalia;Carnivora;Phocidae") ~ "Eukaryota;Chordata;Mammalia;Carnivora;Phocidae;Phoca",
+      str_starts(final_taxonomy, "Eukaryota;Chordata;Mammalia;Carnivora;Otariidae;Zalophus") ~ "Eukaryota;Chordata;Mammalia;Carnivora;Otariidae;Zalophus",
+      str_starts(final_taxonomy, "Eukaryota;Chordata;Actinopteri;Perciformes;Sebastidae;Sebastes") ~ "Eukaryota;Chordata;Actinopteri;Perciformes;Sebastidae;Sebastes",
+      str_starts(final_taxonomy, "EEukaryota;Chordata;Hyperoartia;Petromyzontiformes;Petromyzontidae;Lampetra") ~ "Eukaryota;Chordata;Hyperoartia;Petromyzontiformes;Petromyzontidae;Lampetra",
+      TRUE ~ final_taxonomy  # Keep the original taxonomy if it doesn't match the above conditions
+    ))
+}
 # Example usage:
 # Assuming your taxonomy data is in a data frame called `tax` with columns: featureid and final_taxonomy
 # tax <- data.frame(

@@ -68,14 +68,15 @@ library(tidyverse)
 
 load in the metadata for the mock community data
 ```{r}
-mock_data <- read.csv(here("input-files","Mock_communities_18S_metadata.csv"), header=T, check.names = FALSE)
+mock_data <- read.csv(here("input-files","Mock_communities_MiFish_metadata.csv"), header=T, check.names = FALSE)
 ```
 There is more columns than we need so let's clean that dataframe up - the start_conc_ng in Zack's input is actual total DNA so will just use the mass_ng since they are the same type of "conc"
 ```{r}
 mock_data %>% 
-  rename(taxon_assign = "18S_taxon_assign") %>% 
+  rename(taxon_assign = "MiFish_taxon_assign") %>% 
   rename(species = "Species") %>% 
-  select(species,taxon_assign, Community, Even_prop, Even_mass_ng, SK1_prop, SK1_mass_ng, SK2_prop, SK2_mass_ng) -> mock_data
+  select(species,taxon_assign, Even_prop, Even_mass_ng, SK1_prop, SK1_mass_ng, SK2_prop, SK2_mass_ng) %>% 
+  mutate(Community = "PvPrey")-> mock_data
 
 ```
 
@@ -83,9 +84,9 @@ Let's clean up the mock data of the species that are causing issues for model fi
 ```{r}
 #let's remove Nereididae abd the lamprey because they seem to be causing problems in the model and aren't that prevelant in the diet, plus we can use the TM if we need to, Neotrypaea may also be a problem in the combined data
 mock_data %>% 
-  filter(taxon_assign != "Nereididae") %>% 
-  filter(taxon_assign != "Lampetra fluviatilis") %>% 
-  filter(taxon_assign != "Chimaeridae") -> mock_data
+  filter(taxon_assign != "") %>% 
+  filter(taxon_assign != "") %>% 
+  filter(taxon_assign != "") -> mock_data
 ```
 
 we need to make it longform with a specific name for each community that matches the samplenames in the sequencing metadata
@@ -106,12 +107,12 @@ long_mock_data <- mock_data %>%
     community = paste(Community, sample_type, sep = "_")
   ) %>%
   rename(
-    ID_18S = taxon_assign
+    ID_MiFish = taxon_assign
   ) %>%
   # Remove original Community column (now in community)
   select(-Community) %>%
   # Group by ID_18S and community to sum concentrations
-  group_by(ID_18S, community) %>%
+  group_by(ID_MiFish, community) %>%
   summarise(
     start_conc_ng = sum(start_conc_ng, na.rm = TRUE),
     .groups = "drop"
@@ -119,7 +120,7 @@ long_mock_data <- mock_data %>%
   # Remove any zero-concentration entries
   filter(start_conc_ng > 0) %>%
   # Sort for clean output
-  arrange(community, ID_18S)
+  arrange(community, ID_MiFish)
 
 # First fix the naming in long_mock_data
 long_mock_data <- long_mock_data %>%
@@ -137,9 +138,9 @@ head(long_mock_data)
 
 okay we need the Mock community sequencing data now and we need to modify the names of the collumns and clean up the rows and taxonomy
 ```{r}
-asv_data <- read.csv(here("intermediate-files","CorrectionBiasRun","CorBias_18S_taxon_decontam_asv_table.csv"), header = T, check.names = F)
+asv_data <- read.csv(here("intermediate-files","CorrectionBiasRun","CorBias_MiFish_taxon_decontam_asv_table.csv"), header = T, check.names = F)
 
-asv_meta <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","00-data","metadata.tsv"), sep = "\t", header = T)
+asv_meta <- read.csv(here("input-files","CorrectionBias_run_metadata.csv"),header = T, check.names = F)
 
 asv_wild_data <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB2_18S_taxon_decontam_asv_table.csv"), header = T, check.names = F)
 
