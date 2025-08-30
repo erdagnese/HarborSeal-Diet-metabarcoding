@@ -29,13 +29,18 @@ run_md <- read.csv(here("input-files","CorrectionBias_run_metadata.csv"),header 
 sp_map <- read.csv(here("input-files","Species_mapping_18S_MiFish.csv"),header = T,check.names = F)
 
 
-mock_md <- read.csv(here("input-files","Mock_communities_18S_metadata.csv"),header = T,check.names = F)
+mock_md_18S <- read.csv(here("input-files","Mock_communities_18S_metadata.csv"),header = T,check.names = F)
+
+mock_md_MF <- read.csv(here("input-files","Mock_communities_MiFish_metadata.csv"),header = T,check.names = F)
+
 ```
 
 Let's deal with the controlled_feeding first, should be more straightforward
 ```{r}
 CF_md %>% 
-  dplyr::rename("actual_mass"="actual mass") %>% 
+  mutate(actual_mass = as.numeric(actual_mass)) %>% 
+  mutate(total_mass = as.numeric(total_mass)) %>% 
+  mutate(expected_prop  = as.numeric(expected_prop)) %>% 
   mutate(actual_prop = actual_mass/total_mass) %>% 
   group_by(diet,date,seal_id) -> CF_md
 
@@ -56,7 +61,8 @@ CF_scat_long <- CF_scat_map %>%
     values_to = "seal_id"
   ) %>%
   filter(!is.na(seal_id)) %>%
-  select(-seal_source)
+  select(-seal_source) %>% 
+  mutate(date = as.character(date))
 
 # Now join with CF_md to get the diet information
 CF_combined_md <- CF_scat_long %>%
@@ -103,5 +109,102 @@ TM_run_md %>%
   mutate(across(c(diet_sp, MiFish_taxon_assign), ~na_if(., ""))) -> TM_run_md
 
 write.csv(TM_run_md, here("input-files","TM_master_input_metadata.csv"), row.names = F)
+```
+
+we need to also make the model_name so it makes it easier to use in the model fit plotting and mapping to the model output 
+```{r}
+library(tidyverse)
+library(stringr)
+
+# Enhanced parser that handles complex station names
+parse_sample_name <- function(samplename, region) {
+  parts <- str_split(samplename, "_")[[1]]
+  
+  if (region == "ControlFeeding") {
+    # Format: PvCF_D1_01_TR1 (exactly 4 parts)
+    creek <- parts[1]
+    station <- parts[2]
+    biol <- as.integer(parts[3])
+    tech <- as.integer(str_remove(parts[4], "TR"))
+  } else if (region == "TissueMix") {
+    creek <- "TM"
+    biol <- as.integer(parts[2])
+    
+    # Check if last part is a tech rep (digits or R+digits)
+    last_part <- tail(parts, 1)
+    if (str_detect(last_part, "^(R?\\d+)$")) {
+      tech <- as.integer(str_remove(last_part, "R"))
+      # Station is everything between biol and tech
+      station <- paste(parts[3:(length(parts)-1)], collapse = "_")
+    } else {
+      tech <- 1
+      # Station is everything after biol
+      station <- paste(parts[3:length(parts)], collapse = "_")
+    }
+  } else {
+    return(list(creek = NA, station = NA, biol = NA, tech = NA))
+  }
+  
+  return(list(creek = creek, station = station, biol = biol, tech = tech))
+}
+
+# Final transformation function
+modified_sample_data <- function(asv_data) {
+  asv_data %>%
+    filter(region %in% c("ControlFeeding", "TissueMix")) %>%
+    rowwise() %>%
+    mutate(
+      parsed = list(parse_sample_name(samplename, region)),
+      creek = parsed$creek,
+      station = parsed$station,
+      biol = parsed$biol,
+      tech = parsed$tech,
+      time = 1,
+       ) %>%
+    ungroup() %>%
+    # Keep samplename in the output for verification
+    select(samplename, time, creek, station, biol, tech) %>%
+    filter(!is.na(creek))  # Remove any unparseable samples
+}
+
+
+# Run the transformation
+#sample_data <- modified_sample_data(samples18S_asv_data)
+
+
+```
+
+We need to remake the model_name in this metadata for the input props 
+```{r}
+# don't need the mocks, that data is parsed in the amplification bias correction script
+run_md %>% 
+  filter(region != "MockCom") %>% 
+  mutate(samplename_2 = samplename) -> run_obs_md
+
+run_sample_data <- modified_sample_data(run_obs_md)
+
+run_sample_data %>% 
+  mutate(formatted_biol = ifelse(biol < 10, paste0("0", biol), as.character(biol))) %>% 
+  mutate(SampleID = case_when(creek == "PvCF" ~ paste(creek,station,formatted_biol,sep = "_"),
+                              creek == "TM"~ paste(creek,formatted_biol,station, sep = "_"))) -> run_sample_data
+
+station_map <- run_sample_data %>% 
+  distinct(creek, station) %>% 
+  arrange(creek, station) %>% 
+  group_by(creek) %>% 
+  mutate(station_num = row_number()) %>% 
+  ungroup() %>% 
+  mutate(station_idx = row_number())  
+
+run_sample_data <- left_join(run_sample_data, station_map, by=c("creek","station"))  
+
+run_sample_data %>% 
+  mutate(model_out_name = paste(time,creek,station_num,biol,tech, sep = "."),
+         model_out_name2 = paste(time,creek,station_idx,biol,tech, sep = ".")) -> run_sample_data
+
+CF_combined_md_mod <- left_join(CF_combined_md,run_sample_data, by="SampleID")
+
+write.csv(CF_combined_md_mod, here("input-files","PvCF_master_diet_sample_metadata.csv"), row.names = F)
+  
 ```
 
