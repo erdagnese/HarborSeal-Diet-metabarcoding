@@ -138,6 +138,9 @@ asv_wild_data <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB
 
 wild_md3 <- read.csv(here("input-files","FULL_CBrun2_metadata.csv"), header = T)
 
+expected_prop_mapTM <- read.csv(here("input-files","TM_master_input_metadata.csv"), header = T)
+expected_prop_mapCtrF <- read.csv(here("input-files","PvCF_master_scat_metadata.csv"), header = T)
+
 ```
 
 
@@ -158,7 +161,7 @@ asv_meta %>%
 # First, get the sample IDs you want to keep from the metadata
 samples_to_keep <- mock_asv_meta$sampleid
 
-# Identify the row(s) with the specific taxonomy you want to modify
+# Identify the row(s) with the specific taxonomy you want to modify - this is based off of the tissue mixture and seeing that in the mock there are missing reads to O. keta that should be in there.
 target_taxonomy <- "Eukaryota;Chordata;Actinopteri;Salmoniformes;Salmonidae;Oncorhynchus"
 target_rows <- asv_data$final_taxonomy == target_taxonomy
 asv_data$final_taxonomy[target_rows] <- "Eukaryota;Chordata;Actinopteri;Salmoniformes;Salmonidae;Oncorhynchus;Oncorhynchus keta"
@@ -1570,7 +1573,7 @@ glimpse(int_samp_small_tibble)
 # You can see the structure now includes both the full sample name and the station name
 head(int_samp_small_tibble)
 
-saveRDS(int_samp_small_tibble, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250828_MFbayesout_ControlFeedingTMWildScats_int_samp_small_tibble.RDS"))
+saveRDS(int_samp_small_tibble, here("intermediate-files","CorrectionBiasRun","MiFish","model_out","20250829_MFbayesout_ControlFeedingTMWildScats_int_samp_small_tibble.RDS"))
 
 ```
 
@@ -2044,6 +2047,8 @@ print(p4)
 ggsave(here("Figures", "CorrectionBiasRun","20250824_bayesout_ControlFeedingTMWildScats_TM_sample_composition.png"), p4, width = 12, height = 10)
 
 ```
+
+
 
 
 plotting the comparison plots
