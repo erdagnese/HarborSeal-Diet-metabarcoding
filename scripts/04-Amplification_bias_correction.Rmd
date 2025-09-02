@@ -64,6 +64,8 @@ First let's load the packages for formatting the mock community data
 ```{r}
 library(here)
 library(tidyverse)
+
+source(here("scripts","formatting_for_calibrate_metabarcoding.R"))
 ```
 
 load in the metadata for the mock community data
@@ -147,17 +149,9 @@ asv_wild_data <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB
 
 wild_md3 <- read.csv(here("input-files","FULL_CBrun2_metadata.csv"), header = T)
 
-expected_prop_mapTM <- read.csv(here("input-files","TM_master_input_metadata.csv"), header = T)
-expected_prop_mapCtrF <- read.csv(here("input-files","PvCF_master_scat_metadata.csv"), header = T)
+expected_prop_mapTM <- read.csv(here("input-files","TM_master_sample_metadata.csv"), header = T, check.names = F)
+expected_prop_mapCtrF <- read.csv(here("input-files","PvCF_master_diet_sample_metadata.csv"), header = T, check.names = F)
 ```
-
-
-
-I've modified the calibration function so eventually should be able to just call this and run it... stay tuned
-```{r}
-source(here("scripts","calibrate_metabarcoding.R"))
-```
-
 
 
 let's select out the mock community samples 
@@ -253,6 +247,8 @@ merged_data_comb_fish <- mock_asv_data %>%
 
 ```
 this removed the ratfish because nothing assigned to chimaeriformes in the 18S mocks - there is not a good 18S reference seq for ratfish and apparently it is different enough from the other chondricthyes that it won't even assign to that clade.
+
+
 
 Let's do a sanity check- barplot of existing props of all species in each mock
 ```{r}
@@ -807,7 +803,7 @@ create_station_mapping <- function(observation_data) {
         creek == "PvCF" ~ "Diet",
         creek == "TM" ~ "TissueMix",
         creek == "PvScat" ~ "WildScat",
-        creek == "MockCom" ~ "Mock2",
+        creek == "MockCom" ~ "MockCom2",
         TRUE ~ "Unknown"
       )
     ) %>%
@@ -816,7 +812,7 @@ create_station_mapping <- function(observation_data) {
     mutate(station_idx = row_number()) %>%
     mutate(stationname = station) %>% 
     mutate(station = station_idx_within_creek) %>% 
-    select(stationname, station, station_type)
+    dplyr::select(creek,stationname, station, station_type)
   
   return(station_mapping)
 }
@@ -865,6 +861,11 @@ print(p3)
 ```
 okay working as expected after transform
 
+
+I've modified the calibration function so eventually should be able to just call this and run it... stay tuned
+```{r}
+source(here("scripts","calibrate_metabarcoding.R"))
+```
 
 Modified model running script to handle changes that are leading to crazy issues like not setting the reference species to an appropriate one
 ```{r}
@@ -1113,7 +1114,7 @@ Pros: Very fast.
 Cons: Provides no measure of uncertainty (no confidence intervals). If the model has multiple potential solutions, it will only find one.
 
 
-Let's plot theoutputs to check the single estimate fit and output props before we run the full model.
+Let's plot the outputs to check the single estimate fit and output props before we run the full model.
 ```{r}
 library(tidyverse)
 
@@ -1345,7 +1346,7 @@ saveRDS(bayes_out, here("intermediate-files","CorrectionBiasRun","Prey18S","mode
 summaryout <- summary(bayes_out$Bayes_modelfit)$summary
 write.csv(summaryout, here("intermediate-files","CorrectionBiasRun","Prey18S","model_out","20250829_bayesout_ControlFeedingTMWildScats_summary.csv"))
 
-#bayes_out <- readRDS( here("intermediate-files","CorrectionBiasRun","Prey18S","model_out","20250829_bayesout_ControlFeedingTMWildScats.RDS"))
+bayes_out <- readRDS( here("intermediate-files","CorrectionBiasRun","Prey18S","model_out","20250829_bayesout_ControlFeedingTMWildScats.RDS"))
 
 bayes_out$Bayes_alpha_est
 bayes_out$Bayes_estimates %>%
@@ -1400,7 +1401,7 @@ sample_mapping <- tibble(
   # Convert station_num to numeric
   mutate(station_num = as.numeric(station_num)) %>%
   # Join with your station_mapping
-  left_join(station_mapping, by = c("station_num" = "station")) %>%
+  left_join(station_mapping, by = c("station_num" = "station", "sampletype"="creek")) %>%
   # Optional: recreate the original sample_name if needed
   mutate(sample_name = paste(time, sampletype, station_num, biol, sep = "_"))
 
@@ -1434,8 +1435,9 @@ glimpse(int_samp_small_tibble)
 # You can see the structure now includes both the full sample name and the station name
 head(int_samp_small_tibble)
 
-saveRDS(int_samp_small_tibble, here("intermediate-files","CorrectionBiasRun","Prey18S","20250829_bayesout_ControlFeedingTMWildScats_int_samp_small_tibble.RDS"))
+saveRDS(int_samp_small_tibble, here("intermediate-files","CorrectionBiasRun","Prey18S","model_out","20250829_bayesout_ControlFeedingTMWildScats_int_samp_small_tibble.RDS"))
 
+int_samp_small_tibble <- readRDS(here("intermediate-files","CorrectionBiasRun","Prey18S","model_out","20250829_bayesout_ControlFeedingTMWildScats_int_samp_small_tibble.RDS"))
 ```
 
 ```{r}
@@ -1483,7 +1485,7 @@ summarize_bayes_output <- function(bayes_out, stan_data, station_mapping) {
     separate(sample_name, into = c("time", "sampletype", "station_num", "biol"), 
              remove = FALSE, sep = "_", fill = "right") %>%
     mutate(station_num = as.numeric(station_num)) %>%
-    left_join(station_mapping, by = c("station_num" = "station"))
+    left_join(station_mapping, by = c("station_num" = "station", "sampletype"="creek"))
   
   # Create mapping for species
   species_mapping <- tibble(
@@ -1548,7 +1550,9 @@ species_summary <- summary_bayes_out$species_summary
 plotting_data <- summary_bayes_out$plotting_data
 
 # Save the plotting data as in your example
-saveRDS(plotting_data, here("intermediate-files","CorrectionBiasRun","Prey18S", "20250829_bayesout_ControlFeedingTMWildScats_qm_data_plotting.rds"))
+saveRDS(plotting_data, here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_data_plotting.rds"))
+
+plotting_data <- readRDS(here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_data_plotting.rds"))
 
 # Check the results
 glimpse(plotting_data)
@@ -1559,10 +1563,16 @@ head(species_summary)
 
 ```{r}
 # Save the other summary results
-saveRDS(mean_estimates, here("intermediate-files","CorrectionBiasRun","Prey18S", "20250829_bayesout_ControlFeedingTMWildScats_qm_mean_estimates.rds"))
-saveRDS(summary_stats, here("intermediate-files","CorrectionBiasRun","Prey18S", "20250829_bayesout_ControlFeedingTMWildScats_qm_samp_small_summary_stats.rds"))
-saveRDS(species_summary, here("intermediate-files","CorrectionBiasRun","Prey18S", "20250829_bayesout_ControlFeedingTMWildScats_qm_species_summary.rds"))
-saveRDS(full_posterior, here("intermediate-files","CorrectionBiasRun","Prey18S", "20250829_bayesout_ControlFeedingTMWildScats_full_posterior.rds"))
+saveRDS(mean_estimates, here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_mean_estimates.rds"))
+#mean_estimates <- readRDS(here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_mean_estimates.rds"))
+  
+saveRDS(summary_stats, here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_samp_small_summary_stats.rds"))
+#summary_stats <- readRDS(here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_samp_small_summary_stats.rds"))
+
+saveRDS(species_summary, here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_species_summary.rds"))
+#species_summary <- readRDS(here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_qm_species_summary.rds"))
+
+saveRDS(full_posterior, here("intermediate-files","CorrectionBiasRun","Prey18S","model_out", "20250829_bayesout_ControlFeedingTMWildScats_full_posterior.rds"))
 
 # Quick visualization
 ggplot(summary_stats, aes(x = species, y = mean_prop, color = stationname)) +
@@ -1572,6 +1582,18 @@ ggplot(summary_stats, aes(x = species, y = mean_prop, color = stationname)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(title = "Posterior estimates of species proportions by station",
        x = "Species", y = "Estimated proportion")
+```
+
+
+```{r}
+detach("package:MCMCpack", unload = TRUE)
+detach("package:MASS", unload = TRUE)
+
+library(here)
+library(tidyverse)
+
+source(here("scripts","plotting_post_modellling.R"))
+
 ```
 
 
@@ -1667,160 +1689,871 @@ ggsave(here("Figures", "CorrectionBiasRun","20250829_bayesout_ControlFeedingTMWi
 
 Getting the input and expected proportion metadata to compare the model output to the input and expected proportions to see if it is working to get it closer to reality
 ```{r}
+station_mapping <- readRDS(here("intermediate-files","20250829_Prey18S_observationData_stationMapping.RDS"))
+
 combined_sample_data_filtered %>% 
-  
+  dplyr::rename("stationname"="station") %>% 
+  left_join(station_mapping, by = c("creek","stationname")) %>% 
+  mutate(model_out_name = paste(time,creek,station,biol, sep = "_")) %>% 
+  dplyr::rename("sampletype"="creek","species_name"="species","station_num"="station") %>% 
+  mutate(time = as.character(time)) %>% 
+  mutate(biol = as.character(biol))-> combined_sample_station_data
+
+#save this because it has all the info for mapping and the input reads for just the species included in the modelling
+write.csv(combined_sample_station_data, here("intermediate-files","Prey18S_sample_data_withMD_inputreads_20250901.csv"), row.names = F)
+
+# okay now join to the summary_stats 
+summary_sample_data <- combined_sample_station_data %>% 
+  left_join(summary_stats, by = c("model_out_name"="sample_name","time","sampletype","stationname","biol","station_num","species_name"))
+#save this because it has everything - there are corrected props repeated cuz of tech_reps
+write.csv(summary_sample_data, here("intermediate-files","Prey18S_modelout_summarystats_withMD_inputreads_20250901.csv"), row.names = F)
+
+summary_sample_data <- read.csv(here("intermediate-files","Prey18S_modelout_summarystats_withMD_inputreads_20250901.csv"), header = T, check.names = F)
+```
+
+Now we can bring in the expected_props - start with the mock since it is already calculated based on the species in the model
+```{r}
+input_mock_RFcomm <- readRDS(here("intermediate-files","Prey18S_RepFish_mock_community_data.RDS") )
+
+input_mock_RFcomm %>%
+  rename("stationname"="Community") %>% 
+  left_join(station_mapping, by = "stationname") %>% 
+  mutate(biol = "1") %>% 
+  mutate(time = "1") %>%  
+  mutate(model_out_name = paste(time,creek,station,biol, sep = "_")) %>% 
+  dplyr::select(!c(N_pcr_mock)) %>% 
+  rename("calc_expected_prop"="start_prop") -> input_mock_sample_data
+```
+
+For the controlled feeding expected props to look at each seal whose scat it could be
+```{r}
+# Modify the expected_prop_mapCtrF dataframe to handle multiple seal IDs
+expected_prop_mapCtrF_modified <- expected_prop_mapCtrF %>%
+  rename("P18S_taxon_assign" = "18S_taxon_assign") %>%
+  select(SampleID, samplename, model_out_name, time, creek, station, station_num, 
+         biol, tech, seal_id, diet_sp, P18S_taxon_assign, actual_mass, 
+         total_mass, expected_prop, Species) %>%
+  distinct(SampleID, samplename, model_out_name, time, creek, station, station_num, 
+           biol, tech, seal_id, diet_sp, P18S_taxon_assign, actual_mass, 
+           total_mass, expected_prop, Species) %>%
+  # Calculate actual_prop for each seal
+  mutate(actual_prop = actual_mass / total_mass) %>%
+  # Group by SampleID to check for multiple seal_ids
+  group_by(SampleID) %>%
+  mutate(
+    seal_count = n_distinct(seal_id),
+    has_multiple_seals = seal_count > 1
+  ) %>%
+  ungroup() %>%
+  # Group by SampleID and Species to handle multiple seal IDs
+  group_by(SampleID, Species) %>%
+  mutate(
+    seal_rank = match(seal_id, unique(seal_id))
+  ) %>%
+  ungroup() %>%
+  # Create separate columns for each seal's data (only for seal_id, actual_mass, total_mass, actual_prop)
+  pivot_wider(
+    id_cols = c(SampleID, samplename, model_out_name, time, creek, station, 
+                station_num, biol, tech, diet_sp, P18S_taxon_assign, Species, 
+                expected_prop, has_multiple_seals),
+    names_from = seal_rank,
+    values_from = c(seal_id, actual_mass, total_mass, actual_prop),
+    names_glue = "seal_{seal_rank}_{.value}",
+    values_fn = first  # Take the first value if there are duplicates
+  ) %>%
+  # Clean up column names
+  rename_with(~gsub("_seal_id", "", .x), starts_with("seal_"))
+
+write.csv(expected_prop_mapCtrF_modified, here("input-files","Prey18S_controlfeeding_input_data.csv"),row.names = F)
+
+#expected_prop_mapCtrF_modified <- read.csv(here("input-files","Prey18S_controlfeeding_input_data.csv"), header = T, check.names = F)
+
+# Second step: Group by samplename and P18S_taxon_assign to sum masses and expected proportions
+expected_prop_mapCtrF_grouped <- expected_prop_mapCtrF_modified %>%
+  # Group by samplename and taxon assignment
+  group_by(samplename, P18S_taxon_assign) %>%
+  summarize(
+    # Sum actual masses for each seal
+    seal_1_actual_mass = sum(seal_1_actual_mass, na.rm = TRUE),
+    seal_2_actual_mass = sum(seal_2_actual_mass, na.rm = TRUE),
+    # Sum expected proportions (since we're summing masses, we should sum expected proportions too)
+    expected_prop = sum(expected_prop, na.rm = TRUE),
+    # Take the first total mass (should be consistent within sample)
+    seal_1_total_mass = first(seal_1_total_mass),
+    seal_2_total_mass = first(seal_2_total_mass),
+    # Recalculate actual proportions based on summed masses
+    seal_1_actual_prop = seal_1_actual_mass / seal_1_total_mass,
+    seal_2_actual_prop = seal_2_actual_mass / seal_2_total_mass,
+    # Keep other metadata (take first value since they should be consistent within group)
+    SampleID = first(SampleID),
+    model_out_name = first(model_out_name),
+    time = first(time),
+    creek = first(creek),
+    station = first(station),
+    station_num = first(station_num),
+    biol = first(biol),
+    tech = first(tech),
+    diet_sp = first(diet_sp),
+    has_multiple_seals = first(has_multiple_seals),
+    # Collect all species names for reference
+    species_list = paste(unique(Species), collapse = "; "),
+    .groups = "drop"
+  ) %>%
+  # Select and reorder columns for clarity
+  select(
+    SampleID, samplename, model_out_name, time, creek, station, station_num,
+    biol, tech, diet_sp, P18S_taxon_assign, species_list,
+    seal_1_actual_mass, seal_2_actual_mass,
+    seal_1_total_mass, seal_2_total_mass,
+    seal_1_actual_prop, seal_2_actual_prop,
+    expected_prop, has_multiple_seals,
+    everything()
+  )
+
+write.csv(expected_prop_mapCtrF_grouped, here("input-files","Prey18S_controlfeeding_input_data_groupedtaxon.csv"),row.names = F)
+expected_prop_mapCtrF_grouped <- read.csv(here("input-files","Prey18S_controlfeeding_input_data_groupedtaxon.csv"), header = T, check.names = F)
+```
+
+Now the tissue mixtures
+```{r}
+expected_prop_mapTM_modified <- expected_prop_mapTM %>% 
+  filter(str_detect(Plate_ID, "Prey18S")) %>% 
+  rename("P18S_taxon_assign" = "18S_taxon_assign") %>%
+  select(sample, samplename, time, creek, station_alt, biol, tech,
+         Species, P18S_taxon_assign, Target_initial_mass, 
+         PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref) %>% 
+  distinct(sample, samplename, time, creek, station_alt, biol, tech,
+           Species, P18S_taxon_assign, Target_initial_mass, 
+           PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref) %>%
+  # Join with station_mapping to get the correct stationname and station_num
+  left_join(station_mapping %>% select(stationname, station, station_type),
+            by = c("station_alt" = "stationname")) %>%
+  filter(!is.na(station)) %>% 
+  # Create the correct model_out_name
+  mutate(
+    model_out_name = paste(time, creek, station, biol, sep = "_")
+  )
+
+# Now create the long format for TissueMix
+expected_prop_mapTM_long <- expected_prop_mapTM_modified %>%
+  mutate(
+    species_type = "target",
+    initial_mass = Target_initial_mass,
+    proportion = prop_target
+  ) %>%
+  select(sample, samplename, model_out_name, time, creek, station, station_num = station,
+         biol, tech, species_type, Species, P18S_taxon_assign,
+         initial_mass, Mixture_final_mass, proportion) %>%
+  # Create reference species rows
+  bind_rows(
+    expected_prop_mapTM_modified %>%
+      mutate(
+        species_type = "reference",
+        Species = "Clupea pallasii",
+        P18S_taxon_assign = "Actinopteri",
+        initial_mass = PacHer_initial_mass,
+        proportion = prop_ref
+      ) %>%
+      select(sample, samplename, model_out_name, time, creek, station, station_num = station,
+             biol, tech, species_type, Species, P18S_taxon_assign,
+             initial_mass, Mixture_final_mass, proportion)
+  ) %>%
+  # Calculate actual_prop based on initial_mass and Mixture_final_mass
+  mutate(
+    actual_prop = initial_mass / Mixture_final_mass
+  )
+
+
 ```
 
 
-plotting the comparison plots
 ```{r}
-library(here)
-
-# Create a directory for the individual sample plots using here()
-plot_dir <- here("sample_comparison_plots")
-if (!dir.exists(plot_dir)) {
-  dir.create(plot_dir)
-}
-
-cat(paste("Creating plots in:", plot_dir, "\n"))
-
-# Get unique model_sample_names
-unique_model_samples <- unique(input_corr_props$model_sample_name)
-
-# Create individual plots for each model_sample_name
-for (model_sample in unique_model_samples) {
-  
-  # Filter data for this model sample
-  sample_data <- input_corr_props %>%
-    filter(model_sample_name == model_sample)
-  
-  # Get all the original sample names (tech reps) for this model sample
-  original_samples <- unique(sample_data$samplename)
-  
-  # Pivot longer to have both corrected and uncorrected in one column
-  plot_data <- sample_data %>%
-    pivot_longer(
-      cols = c(uncorrected_prop, mean_prop),
-      names_to = "data_type",
-      values_to = "proportion"
-    ) %>%
-    mutate(
-      data_type = factor(data_type,
-                        levels = c("uncorrected_prop", "mean_prop"),
-                        labels = c("Uncorrected Input", "Model Corrected"))
-    )
-  
-  # Create the plot
-  p <- ggplot(plot_data, aes(x = samplename, fill = species, y = proportion)) +
-    geom_col(position = "stack") +
-    labs(
-      title = paste("Sample:", model_sample),
-      subtitle = paste("Station:", unique(sample_data$station_original),
-                      "| Type:", unique(sample_data$station_type)),
-      x = "Technical Replicates",
-      y = "Proportion",
-      fill = "Species"
-    ) +
-    theme_bw() +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      legend.position = "right"
-    ) +
-    scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
-    facet_wrap(~data_type, ncol = 2)
-  
-  # Save the plot using here()
-  filename <- paste0(gsub("[^[:alnum:]]", "_", model_sample), ".png")
-  ggsave(here(plot_dir, filename), plot = p,
-         width = 12, height = 8, units = "in", dpi = 300)
-}
-
-# Verify proportions function (unchanged)
-verify_proportions <- function(input_corr_props) {
-  # Check uncorrected proportions
-  uncorrected_totals <- input_corr_props %>%
-    group_by(samplename) %>%
-    summarise(
-      total_uncorrected = sum(uncorrected_prop),
-      .groups = 'drop'
-    )
-  
-  # Check corrected proportions
-  corrected_totals <- input_corr_props %>%
-    group_by(model_sample_name) %>%
-    summarise(
-      total_corrected = sum(mean_prop),
-      .groups = 'drop'
-    )
-  
-  cat("Uncorrected proportion totals (should be 1):\n")
-  print(summary(uncorrected_totals$total_uncorrected))
-  
-  cat("\nCorrected proportion totals (should be 1):\n")
-  print(summary(corrected_totals$total_corrected))
-  
-  # Identify any samples that don't sum to 1 (within rounding error)
-  problematic_uncorrected <- uncorrected_totals %>%
-    filter(abs(total_uncorrected - 1) > 0.001)
-  
-  problematic_corrected <- corrected_totals %>%
-    filter(abs(total_corrected - 1) > 0.001)
-  
-  cat("\nProblematic uncorrected samples:\n")
-  if (nrow(problematic_uncorrected) > 0) {
-    print(problematic_uncorrected)
-  } else {
-    cat("All good!\n")
-  }
-  
-  cat("\nProblematic corrected samples:\n")
-  if (nrow(problematic_corrected) > 0) {
-    print(problematic_corrected)
-  } else {
-    cat("All good!\n")
-  }
-}
-
-# Verify proportions
-verify_proportions(input_corr_props)
-
-# Create a quick overview plot of a few samples to check
-sample_subset <- unique_model_samples[1:6]  # First 6 samples
-
-overview_data <- input_corr_props %>%
-  filter(model_sample_name %in% sample_subset) %>%
-  pivot_longer(
-    cols = c(uncorrected_prop, mean_prop),
-    names_to = "data_type",
-    values_to = "proportion"
-  ) %>%
+# 1. Calculate uncorrected proportions for each sample
+summary_sample_data_with_uncorrected <- summary_sample_data %>%
+  group_by(samplename) %>%
   mutate(
-    data_type = factor(data_type,
-                      levels = c("uncorrected_prop", "mean_prop"),
-                      labels = c("Uncorrected Input", "Model Corrected"))
+    total_reads_sample = sum(Nreads, na.rm = TRUE),
+    uncorrected_prop = ifelse(total_reads_sample > 0, Nreads / total_reads_sample, 0)
+  ) %>%
+  ungroup()
+
+# 2. Prepare expected proportions from each source
+
+# Mock communities - use model_out_name to match summary_sample_data
+mock_expected <- input_mock_sample_data %>%
+  ungroup() %>%  # Remove any grouping
+  select(model_out_name, sample = stationname, species_name = species, expected_prop = calc_expected_prop) %>%
+  mutate(source = "Mock")
+
+
+# Tissue mixtures - use model_out_name to match summary_sample_data
+tm_expected <- expected_prop_mapTM_long %>%
+  select(model_out_name, sample = samplename, species_name = P18S_taxon_assign, expected_prop = proportion) %>%
+  mutate(source = "TissueMix")
+
+# Controlled feeding - use model_out_name to match summary_sample_data
+ctrf_expected_seal1 <- expected_prop_mapCtrF_grouped %>%
+  select(model_out_name, sample = samplename, species_name = P18S_taxon_assign, 
+         expected_prop = seal_1_actual_prop) %>%
+  mutate(source = "CtrF_Seal1")
+
+ctrf_expected_seal2 <- expected_prop_mapCtrF_grouped %>%
+  select(model_out_name, sample = samplename, species_name = P18S_taxon_assign, 
+         expected_prop = seal_2_actual_prop) %>%
+  mutate(source = "CtrF_Seal2")
+
+# Combine all expected proportions
+all_expected <- bind_rows(
+  mock_expected,
+  tm_expected,
+  ctrf_expected_seal1,
+  ctrf_expected_seal2
+) %>%
+  distinct()  # Remove any duplicates
+
+# Create a complete grid of all model_out_name and species_name combinations
+all_samples <- unique(summary_sample_data_with_uncorrected$model_out_name)
+all_species <- unique(summary_sample_data_with_uncorrected$species_name)
+
+complete_grid <- expand.grid(
+  model_out_name = all_samples,
+  species_name = all_species,
+  stringsAsFactors = FALSE
+)
+
+# Expand the all_expected data to include all species for each sample
+all_expected_complete <- complete_grid %>%
+  left_join(all_expected, by = c("model_out_name", "species_name")) %>%
+  # Determine source based on sample naming pattern FIRST
+  mutate(
+    source = case_when(
+      !is.na(source) ~ source,
+      grepl("MockCom", model_out_name) ~ "Mock",
+      grepl("_TM_", model_out_name) ~ "TissueMix",
+      grepl("_PvCF_", model_out_name) ~ "CtrF_Seal1", # Default to Seal1 for controlled feeding
+      grepl("_PvScat_", model_out_name) ~ "WildScat",
+      TRUE ~ "Unknown"
+    )
   )
 
-overview_plot <- ggplot(overview_data, aes(x = model_sample_name, fill = species, y = proportion)) +
-  geom_col(position = "stack") +
-  labs(
-    title = "Overview: Sample Proportions Comparison",
-    x = "Model Sample Name",
-    y = "Proportion",
-    fill = "Species"
-  ) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "right"
-  ) +
-  scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
-  facet_wrap(~data_type, ncol = 2)
+# Now handle expected_prop values carefully based on sample type and species
+all_expected_complete <- all_expected_complete %>%
+  mutate(
+    expected_prop = case_when(
+      # WildScat samples: keep as NA (we don't know expected proportions)
+      grepl("_PvScat_", model_out_name) ~ NA_real_,
+      
+      # Controlled feeding Mammalia: keep as NA (we don't know expected proportion)
+      grepl("_PvCF_", model_out_name) & species_name == "Mammalia" ~ NA_real_,
+      
+      # For samples with expected data but missing values, set to 0 (species shouldn't be present)
+      !is.na(source) & source != "Unknown" & is.na(expected_prop) ~ 0,
+      
+      # Keep existing values for all other cases
+      TRUE ~ expected_prop
+    )
+  )
+# For controlled feeding samples, we need to add both seal options
+ctrf_samples <- all_expected_complete %>%
+  filter(source == "CtrF_Seal1") %>%
+  mutate(source = "CtrF_Seal2") %>%
+  # For Seal2, we need to get the actual expected_prop values
+  left_join(
+    expected_prop_mapCtrF_grouped %>%
+      select(model_out_name, species_name = P18S_taxon_assign, 
+             expected_prop_seal2 = seal_2_actual_prop),
+    by = c("model_out_name", "species_name")
+  ) %>%
+  mutate(
+    expected_prop = case_when(
+      # For Mammalia in controlled feeding, keep as NA
+      species_name == "Mammalia" ~ NA_real_,
+      
+      # Use seal2 expected proportion if available
+      !is.na(expected_prop_seal2) ~ expected_prop_seal2,
+      
+      # Otherwise keep existing value
+      TRUE ~ expected_prop
+    )
+  ) %>%
+  select(-expected_prop_seal2)
 
-# Save overview plot using here()
-ggsave(here("overview_comparison.png"), plot = overview_plot,
-       width = 16, height = 10, units = "in", dpi = 300)
+# Combine back with the complete expected data
+all_expected_final <- bind_rows(
+  all_expected_complete,
+  ctrf_samples
+) %>%
+  distinct() %>% 
+  arrange(model_out_name, species_name, source)
 
-cat(paste("Created individual plots for", length(unique_model_samples), "samples in folder:", plot_dir, "\n"))
-cat(paste("Overview plot saved as:", here("overview_comparison.png"), "\n"))
+# Now create the comprehensive comparison
+final_comparison_df <- summary_sample_data_with_uncorrected %>%
+  # Join with the complete expected proportions
+  left_join(all_expected_final, by = c("model_out_name", "species_name")) %>%
+  rename(
+    corrected_prop = mean_prop,
+    station = stationname
+  ) %>%
+  # Add sample type information based on station_type
+  mutate(
+    sample_type = case_when(
+      station_type == "MockCom2" ~ "MockCom2",
+      station_type == "TissueMix" ~ "TissueMix",
+      station_type == "Diet" ~ "Diet",
+      station_type == "WildScat" ~ "WildScat",
+      TRUE ~ "Unknown"
+    )
+  ) 
+  
+
+# Now let's fix the sample names in final_comparison_df
+final_comparison_df_fixed <- final_comparison_df %>%
+  mutate(
+    # For WildScat: use samplename as is
+    sample_display = ifelse(sample_type == "WildScat", samplename, NA_character_),
+    
+    # For ControlledFeeding: paste(sampletype, station, biol, sep = "_")
+    sample_display = ifelse(sample_type == "Diet",
+                           paste("PvCF", station, biol, sep = "_"), sample_display),
+    
+    # For TissueMix: paste(sampletype, station, biol, sep = "_")
+    sample_display = ifelse(sample_type == "TissueMix",
+                           paste("TM", station, biol, sep = "_"), sample_display),
+    
+    # For Mock: use existing model_out_name (already correct)
+    sample_display = ifelse(sample_type == "MockCom2", sample, sample_display),
+    
+    # For any remaining NAs, use samplename
+    sample_display = ifelse(is.na(sample_display), samplename, sample_display)
+  ) %>% 
+  select(-sample) %>% 
+  rename(sample = sample_display)
+
+
+write.csv(final_comparison_df_fixed, here("intermediate-files", "Prey18S_all_props_md_CombFmodel_MamRef_20250902.csv"), row.names = F)
+```
+
+
+```{r}
+# Create a corrected plotting function that ensures all species are included
+plot_sample_comparison_corrected <- function(comparison_df, output_dir) {
+  
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  # Clean the sample_type column first
+  comparison_df_clean <- comparison_df %>%
+    mutate(
+      sample_type = trimws(sample_type),
+      sample_type = ifelse(sample_type == "", NA, sample_type)
+    )
+  
+  # Get unique samples based on the 'sample' column
+  unique_samples <- unique(comparison_df_clean$sample)
+  
+  cat("Total samples to process:", length(unique_samples), "\n")
+  
+  for (current_sample in unique_samples) {
+    
+    sample_data <- comparison_df_clean %>%
+      filter(sample == current_sample)
+    
+    # Get sample type
+    sample_type <- unique(sample_data$sample_type)[1]
+    
+    # Debug output
+    cat("Processing:", current_sample, "| Type:", sample_type, "\n")
+    
+    # Skip if we can't determine sample type
+    if (is.na(sample_type)) {
+      warning(paste("Skipping sample", current_sample, "- cannot determine sample type"))
+      next
+    }
+    
+    # Get ALL species for this sample
+    all_species <- unique(sample_data$species_name)
+    
+    # Prepare data based on sample type
+    if (sample_type == "WildScat") {
+      # For WildScat, create a complete dataset with all species
+      plot_data <- sample_data %>%
+        complete(species_name = all_species, nesting(tech)) %>%
+        mutate(
+          uncorrected_prop = ifelse(is.na(uncorrected_prop), 0, uncorrected_prop),
+          corrected_prop = ifelse(is.na(corrected_prop), 0, corrected_prop)
+        ) %>%
+        select(species_name, uncorrected_prop, corrected_prop, tech) %>%
+        pivot_longer(
+          cols = c(uncorrected_prop, corrected_prop),
+          names_to = "data_type",
+          values_to = "proportion"
+        ) %>%
+        mutate(
+          data_type = case_when(
+            data_type == "uncorrected_prop" ~ paste("Uncorrected_Tech", tech),
+            data_type == "corrected_prop" ~ "Corrected"
+          )
+        )
+      
+      title <- paste("Wild Scat Sample:", current_sample)
+      
+    } else if (sample_type == "TissueMix") {
+      # For TissueMix, ensure all species are included
+      plot_data <- sample_data %>%
+        complete(species_name = all_species, nesting(tech)) %>%
+        mutate(
+          uncorrected_prop = ifelse(is.na(uncorrected_prop), 0, uncorrected_prop),
+          corrected_prop = ifelse(is.na(corrected_prop), 0, corrected_prop),
+          expected_prop = ifelse(is.na(expected_prop), 0, expected_prop)
+        ) %>%
+        select(species_name, uncorrected_prop, corrected_prop, expected_prop, tech) %>%
+        pivot_longer(
+          cols = c(uncorrected_prop, corrected_prop, expected_prop),
+          names_to = "data_type",
+          values_to = "proportion"
+        ) %>%
+        mutate(
+          data_type = case_when(
+            data_type == "uncorrected_prop" ~ paste("Uncorrected_Tech", tech),
+            data_type == "corrected_prop" ~ "Corrected",
+            data_type == "expected_prop" ~ "Expected"
+          )
+        )
+      
+      title <- paste("Tissue Mix Sample:", current_sample)
+      
+    } else if (sample_type == "Diet") {
+      # For Diet, ensure all species are included
+      plot_data <- sample_data %>%
+        complete(species_name = all_species, nesting(tech, source)) %>%
+        mutate(
+          uncorrected_prop = ifelse(is.na(uncorrected_prop), 0, uncorrected_prop),
+          corrected_prop = ifelse(is.na(corrected_prop), 0, corrected_prop),
+          expected_prop = ifelse(is.na(expected_prop), 0, expected_prop)
+        ) %>%
+        select(species_name, uncorrected_prop, corrected_prop, expected_prop, tech, source) %>%
+        pivot_longer(
+          cols = c(uncorrected_prop, corrected_prop, expected_prop),
+          names_to = "data_type",
+          values_to = "proportion"
+        ) %>%
+        mutate(
+          data_type = case_when(
+            data_type == "uncorrected_prop" ~ paste("Uncorrected_Tech", tech),
+            data_type == "corrected_prop" ~ "Corrected",
+            data_type == "expected_prop" & source == "CtrF_Seal1" ~ "Expected (Seal 1)",
+            data_type == "expected_prop" & source == "CtrF_Seal2" ~ "Expected (Seal 2)",
+            TRUE ~ data_type
+          )
+        )
+      
+      title <- paste("Diet Sample:", current_sample)
+      
+    } else if (sample_type == "MockCom2") {
+      # For Mock, ensure all species are included
+      plot_data <- sample_data %>%
+        complete(species_name = all_species, nesting(tech)) %>%
+        mutate(
+          uncorrected_prop = ifelse(is.na(uncorrected_prop), 0, uncorrected_prop),
+          corrected_prop = ifelse(is.na(corrected_prop), 0, corrected_prop),
+          expected_prop = ifelse(is.na(expected_prop), 0, expected_prop)
+        ) %>%
+        select(species_name, uncorrected_prop, corrected_prop, expected_prop, tech) %>%
+        pivot_longer(
+          cols = c(uncorrected_prop, corrected_prop, expected_prop),
+          names_to = "data_type",
+          values_to = "proportion"
+        ) %>%
+        mutate(
+          data_type = case_when(
+            data_type == "uncorrected_prop" ~ paste("Uncorrected_Tech", tech),
+            data_type == "corrected_prop" ~ "Corrected",
+            data_type == "expected_prop" ~ "Expected"
+          )
+        )
+      
+      title <- paste("Mock Community Sample:", current_sample)
+      
+    } else {
+      warning(paste("Skipping sample", current_sample, "- unknown sample type:", sample_type))
+      next
+    }
+    
+    # Verify proportions sum to 1 for each data type
+    prop_sums <- plot_data %>%
+      group_by(data_type) %>%
+      summarize(total_prop = sum(proportion, na.rm = TRUE), .groups = "drop")
+    
+    cat("  Proportion sums by data type:\n")
+    print(prop_sums)
+    
+    # Create the plot
+    p <- ggplot(plot_data, aes(x = data_type, fill = species_name, y = proportion)) +
+      geom_col(position = "stack") +
+      labs(
+        title = title,
+        x = "Data Type",
+        y = "Proportion",
+        fill = "Species"
+      ) +
+      theme_bw() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "right",
+        plot.title = element_text(hjust = 0.5)
+      ) +
+      scale_y_continuous(limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) +
+      scale_fill_viridis_d()
+    
+    # Save the plot
+    filename <- paste0(gsub("[^[:alnum:]]", "_", current_sample), ".png")
+    file_path <- file.path(output_dir, filename)
+    
+    ggsave(file_path, plot = p, width = 12, height = 9, units = "in", dpi = 300)
+    
+    # Verify the file was created
+    if (file.exists(file_path)) {
+      cat("  Successfully created plot:", filename, "\n")
+    } else {
+      warning(paste("  Failed to create plot:", filename))
+    }
+  }
+  
+  cat(paste("Finished processing", length(unique_samples), "samples\n"))
+}
+
+
+```
+
+now use the plotting function
+```{r}
+# Let's verify the structure first
+cat("Sample column values (first 10):\n")
+print(head(unique(final_comparison_df_fixed$sample), 10))
+
+cat("\nSample type distribution:\n")
+print(table(final_comparison_df_fixed$sample_type, useNA = "always"))
+
+# Now run the corrected plotting function
+plot_sample_comparison_corrected(
+  comparison_df = final_comparison_df_fixed,
+  output_dir = here("Figures","CorrectionBiasRun","sample_comparison_plots_by_type_Prey18S_noGHshr_mamRef_09012025")
+)
+
+# 6. Additional summary statistics
+cat("Summary by sample type:\n")
+type_summary <- final_comparison_df %>%
+  group_by(sample_type) %>%
+  summarize(
+    n_samples = n_distinct(samplename),
+    n_observations = n(),
+    has_expected = sum(!is.na(expected_prop)) > 0,
+    .groups = "drop"
+  )
+print(type_summary)
+
+# 7. Save the comprehensive dataframe
+write_csv(final_comparison_df, here("comprehensive_sample_comparison_data.csv"))
+cat("Comprehensive data saved to: comprehensive_sample_comparison_data.csv\n")
+```
+
+
+```{r}
+library(here)
+library(tidyverse)
+library(janitor)
+
+# 1. Function to recalculate expected proportions based on species present in model
+recalculate_expected_props <- function(expected_df, summary_stats, sample_col, species_col, 
+                                      mass_col = "actual_mass", taxon_assign_col = "18S_taxon_assign") {
+  
+  # Get unique samples from expected data
+  unique_samples <- unique(expected_df[[sample_col]])
+  
+  recalc_list <- list()
+  
+  for (sample in unique_samples) {
+    # Get species present in model output for this sample
+    model_species <- summary_stats %>%
+      filter(sample_name == sample) %>%
+      pull(species_name) %>%
+      unique()
+    
+    # Filter expected data for this sample
+    sample_expected <- expected_df %>%
+      filter(!!sym(sample_col) == sample)
+    
+    if (nrow(sample_expected) == 0) next
+    
+    # Group by taxon assignment and sum masses
+    taxon_sums <- sample_expected %>%
+      filter(!!sym(species_col) %in% model_species) %>%
+      group_by(!!sym(taxon_assign_col)) %>%
+      summarize(
+        total_mass = sum(!!sym(mass_col), na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # Calculate total mass for proportion calculation
+    total_sample_mass <- sum(taxon_sums$total_mass, na.rm = TRUE)
+    
+    if (total_sample_mass > 0) {
+      # Calculate recalculated proportions
+      recalc_props <- taxon_sums %>%
+        mutate(
+          recalc_expected_prop = total_mass / total_sample_mass,
+          sample_name = sample
+        ) %>%
+        rename(species_name = !!sym(taxon_assign_col))
+      
+      recalc_list[[sample]] <- recalc_props
+    }
+  }
+  
+  # Combine all recalculated proportions
+  if (length(recalc_list) > 0) {
+    bind_rows(recalc_list)
+  } else {
+    tibble(sample_name = character(), species_name = character(), 
+           recalc_expected_prop = numeric(), total_mass = numeric())
+  }
+}
+
+# 2. Create comprehensive mapping with recalculated expected proportions
+create_comprehensive_mapping <- function(summary_stats, sample_mapping, 
+                                        expected_prop_mapCtrF, expected_prop_mapTM,
+                                        input_mock_RFcomm, uncorrected_props) {
+  
+  # Recalculate expected proportions for Control Fish samples
+  recalc_CtrF <- recalculate_expected_props(
+    expected_prop_mapCtrF, 
+    summary_stats, 
+    "samplename", 
+    "Species",
+    "actual_mass",
+    "18S_taxon_assign"
+  ) %>%
+    mutate(source = "CtrF")
+  
+  # Recalculate expected proportions for TissueMix samples
+  recalc_TM <- recalculate_expected_props(
+    expected_prop_mapTM, 
+    summary_stats, 
+    "samplename", 
+    "Species",
+    "prop_target",  # Using prop_target as mass equivalent for TM
+    "18S_taxon_assign"
+  ) %>%
+    mutate(source = "TM")
+  
+  # Prepare mock community expected proportions
+  expected_mock <- input_mock_RFcomm %>%
+    mutate(sample_name = paste0("1_MockCom_1_", Tech_Rep)) %>%
+    select(sample_name, species_name = species, recalc_expected_prop = start_prop) %>%
+    mutate(source = "Mock", total_mass = NA_real_)
+  
+  # Combine all recalculated expected proportions
+  all_recalc_expected <- bind_rows(recalc_CtrF, recalc_TM, expected_mock)
+  
+  # Get original expected proportions for reference
+  original_expected_CtrF <- expected_prop_mapCtrF %>%
+    select(sample_name = samplename, species_name = Species, 
+           original_expected_prop = expected_prop) %>%
+    distinct()
+  
+  original_expected_TM <- expected_prop_mapTM %>%
+    select(sample_name = samplename, species_name = Species, 
+           original_expected_prop = prop_target) %>%
+    distinct()
+  
+  original_expected_mock <- input_mock_RFcomm %>%
+    mutate(sample_name = paste0("1_MockCom_1_", Tech_Rep)) %>%
+    select(sample_name, species_name = species, original_expected_prop = start_prop)
+  
+  all_original_expected <- bind_rows(
+    original_expected_CtrF,
+    original_expected_TM,
+    original_expected_mock
+  ) %>%
+    distinct()
+  
+  # Create comprehensive mapping
+  comprehensive_map <- summary_stats %>%
+    left_join(sample_mapping, by = c("sample_name" = "samplename")) %>%
+    left_join(uncorrected_props %>% 
+                select(sample_name = samplename, species_name = species, uncorrected_prop),
+              by = c("sample_name", "species_name")) %>%
+    left_join(all_recalc_expected, by = c("sample_name", "species_name")) %>%
+    left_join(all_original_expected, by = c("sample_name", "species_name")) %>%
+    rename(
+      corrected_prop = mean_prop,
+      station = stationname
+    )
+  
+  return(comprehensive_map)
+}
+
+# 3. Create the comprehensive dataframe
+final_comparison_df <- create_comprehensive_mapping(
+  summary_stats = summary_sample_data,
+  sample_mapping = combined_sample_station_data,
+  expected_prop_mapCtrF = expected_prop_mapCtrF,
+  expected_prop_mapTM = expected_prop_mapTM,
+  input_mock_RFcomm = input_mock_RFcomm,
+  uncorrected_props = input_corr_props
+)
+
+# 4. Enhanced plotting function with all four data types
+plot_sample_comparison_comprehensive <- function(comparison_df, output_dir) {
+  
+  # Create output directory
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  unique_samples <- unique(comparison_df$sample_name)
+  
+  for (sample in unique_samples) {
+    
+    sample_data <- comparison_df %>%
+      filter(sample_name == sample)
+    
+    # Check data availability
+    has_uncorrected <- any(!is.na(sample_data$uncorrected_prop))
+    has_corrected <- any(!is.na(sample_data$corrected_prop))
+    has_recalc_expected <- any(!is.na(sample_data$recalc_expected_prop))
+    has_original_expected <- any(!is.na(sample_data$original_expected_prop))
+    
+    # Prepare data for plotting
+    plot_data <- sample_data %>%
+      select(sample_name, species_name, uncorrected_prop, corrected_prop, 
+             recalc_expected_prop, original_expected_prop) %>%
+      pivot_longer(
+        cols = c(uncorrected_prop, corrected_prop, recalc_expected_prop, original_expected_prop),
+        names_to = "data_type",
+        values_to = "proportion"
+      ) %>%
+      mutate(
+        data_type = case_when(
+          data_type == "uncorrected_prop" ~ "Uncorrected Input",
+          data_type == "corrected_prop" ~ "Model Corrected",
+          data_type == "recalc_expected_prop" ~ "Recalc Expected",
+          data_type == "original_expected_prop" ~ "Original Expected",
+          TRUE ~ data_type
+        ),
+        data_type = factor(data_type, 
+                          levels = c("Uncorrected Input", "Model Corrected", 
+                                    "Recalc Expected", "Original Expected"))
+      ) %>%
+      filter(!is.na(proportion))
+    
+    if (nrow(plot_data) == 0) next
+    
+    # Get sample metadata for title
+    sample_meta <- sample_data %>%
+      distinct(station, station_type, creek) %>%
+      mutate(title_info = paste(
+        "Station:", station,
+        "| Type:", station_type,
+        "| Creek:", creek
+      ))
+    
+    # Create the plot
+    p <- ggplot(plot_data, aes(x = data_type, fill = species_name, y = proportion)) +
+      geom_col(position = "stack") +
+      labs(
+        title = paste("Sample:", sample),
+        subtitle = sample_meta$title_info[1],
+        x = "Data Type",
+        y = "Proportion",
+        fill = "Species"
+      ) +
+      theme_bw() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "right",
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)
+      ) +
+      scale_y_continuous(limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) +
+      scale_fill_viridis_d()
+    
+    # Add data availability annotation
+    availability_text <- paste(
+      if (has_uncorrected) "✓ Uncorrected" else "✗ Uncorrected",
+      if (has_corrected) "✓ Corrected" else "✗ Corrected",
+      if (has_recalc_expected) "✓ Recalc Expected" else "✗ Recalc Expected",
+      if (has_original_expected) "✓ Original Expected" else "✗ Original Expected",
+      sep = " | "
+    )
+    
+    p <- p + annotate("text", x = -Inf, y = -0.05, label = availability_text,
+                     hjust = 0, vjust = 1, size = 3, color = "gray50")
+    
+    # Save the plot
+    filename <- paste0(gsub("[^[:alnum:]]", "_", sample), ".png")
+    ggsave(here(output_dir, filename), plot = p,
+           width = 12, height = 9, units = "in", dpi = 300)
+  }
+  
+  cat(paste("Created comprehensive plots for", length(unique_samples), "samples in:", output_dir, "\n"))
+}
+
+# 5. Create the plots
+plot_sample_comparison_comprehensive(
+  comparison_df = final_comparison_df,
+  output_dir = here("comprehensive_sample_plots")
+)
+
+# 6. Function to save the comprehensive dataframe
+save_comprehensive_data <- function(comprehensive_df, output_file) {
+  # Clean column names and ensure proper formatting
+  final_df <- comprehensive_df %>%
+    clean_names() %>%
+    select(
+      sample_name, species_name, station, station_type, creek,
+      uncorrected_prop, corrected_prop, recalc_expected_prop, original_expected_prop,
+      median_prop, lower_95, upper_95, sd_prop, nreads,
+      everything()
+    ) %>%
+    arrange(sample_name, species_name)
+  
+  # Save to CSV
+  write_csv(final_df, output_file)
+  cat(paste("Comprehensive data saved to:", output_file, "\n"))
+  
+  return(final_df)
+}
+
+# 7. Save the comprehensive dataframe
+final_comprehensive_data <- save_comprehensive_data(
+  final_comparison_df,
+  here("comprehensive_sample_data.csv")
+)
+
+# 8. Summary statistics
+cat("Summary of comprehensive dataframe:\n")
+print(glimpse(final_comprehensive_data))
+
+cat("\nSamples with expected proportions:\n")
+expected_samples <- final_comprehensive_data %>%
+  filter(!is.na(recalc_expected_prop) | !is.na(original_expected_prop)) %>%
+  pull(sample_name) %>%
+  unique()
+print(expected_samples)
+
+cat("\nData availability by sample type:\n")
+availability_summary <- final_comprehensive_data %>%
+  group_by(station_type) %>%
+  summarize(
+    n_samples = n_distinct(sample_name),
+    has_uncorrected = sum(!is.na(uncorrected_prop)) > 0,
+    has_corrected = sum(!is.na(corrected_prop)) > 0,
+    has_recalc_expected = sum(!is.na(recalc_expected_prop)) > 0,
+    has_original_expected = sum(!is.na(original_expected_prop)) > 0,
+    .groups = "drop"
+  )
+print(availability_summary)
 ```
 

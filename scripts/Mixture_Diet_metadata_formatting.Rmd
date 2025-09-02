@@ -46,9 +46,9 @@ CF_md %>%
 
 CF_scat_md %>% 
   mutate(diet = paste("D",Diet,sep = "")) %>% 
-  select(!Diet) %>% 
+  dplyr::select(!Diet) %>% 
   dplyr::rename("date"="Date") %>% 
-  select(!c(PCR_ID,Tech_rep)) %>% 
+  dplyr::select(!c(PCR_ID,Tech_rep)) %>% 
   distinct(SampleID,date,Time,diet,Seal_ID_1,Seal_ID_2,Scat_details) -> CF_scat_map
 
 
@@ -61,13 +61,12 @@ CF_scat_long <- CF_scat_map %>%
     values_to = "seal_id"
   ) %>%
   filter(!is.na(seal_id)) %>%
-  select(-seal_source) %>% 
-  mutate(date = as.character(date))
+  dplyr::select(-seal_source) 
 
 # Now join with CF_md to get the diet information
 CF_combined_md <- CF_scat_long %>%
   left_join(CF_md, by = c("date", "seal_id", "diet")) %>%
-  select(SampleID, date, Time, seal_id, Scat_details, diet_sp, 
+  dplyr::select(SampleID, date, Time, seal_id, Scat_details, diet_sp, 
          expected_prop, actual_mass, total_mass, actual_prop) %>%
   arrange(SampleID, seal_id, diet_sp)
 
@@ -80,7 +79,7 @@ okay let's get the sp_map sorted and then joined for the CF metadata
 sp_map %>% 
   mutate(across(c(diet_sp, MiFish_taxon_assign), ~na_if(., ""))) %>%
   filter(!is.na(diet_sp)) %>% 
-  select(Species,MiFish_taxon_assign,"18S_taxon_assign",diet_sp) %>% 
+  dplyr::select(Species,MiFish_taxon_assign,"18S_taxon_assign",diet_sp) %>% 
   distinct()-> diet_sp_map
 
 CF_combined_md <- left_join(CF_combined_md,diet_sp_map, by="diet_sp")
@@ -92,7 +91,7 @@ write.csv(CF_combined_md, here("input-files","PvCF_master_scat_metadata.csv"),ro
 alright now the tissue mixtures
 ```{r}
 TM_md %>% 
-  select(!c(Box_tiss_mix,Box_subs_mix,Mass_subs_mix_g,Overall_comments,Lost_mass,After_mix_mass,Subsampled_mix,Date,PacHer_sampleID)) %>% 
+  dplyr::select(!c(Box_tiss_mix,Box_subs_mix,Mass_subs_mix_g,Overall_comments,Lost_mass,After_mix_mass,Subsampled_mix,Date,PacHer_sampleID)) %>% 
   mutate(prop_target = Target_initial_mass/Mixture_final_mass) %>% 
   mutate(prop_ref = PacHer_initial_mass/Mixture_final_mass) %>% 
   left_join(sp_map, by="Target_species") -> TM_md_temp
@@ -106,7 +105,10 @@ run_md %>%
 TM_run_md <- left_join(run_TM_md, TM_md_temp,  by="samplename")
 
 TM_run_md %>% 
-  mutate(across(c(diet_sp, MiFish_taxon_assign), ~na_if(., ""))) -> TM_run_md
+  mutate(across(c(diet_sp, MiFish_taxon_assign), ~na_if(., ""))) %>% 
+  mutate(tech_rep = as.numeric(tech_rep)) %>% 
+  mutate(tech_rep = replace_na(tech_rep,1)) -> TM_run_md
+
 
 write.csv(TM_run_md, here("input-files","TM_master_input_metadata.csv"), row.names = F)
 ```
@@ -163,7 +165,7 @@ modified_sample_data <- function(asv_data) {
        ) %>%
     ungroup() %>%
     # Keep samplename in the output for verification
-    select(samplename, time, creek, station, biol, tech) %>%
+    dplyr::select(samplename, time, creek, station, biol, tech) %>%
     filter(!is.na(creek))  # Remove any unparseable samples
 }
 
@@ -188,7 +190,8 @@ run_sample_data %>%
   mutate(SampleID = case_when(creek == "PvCF" ~ paste(creek,station,formatted_biol,sep = "_"),
                               creek == "TM"~ paste(creek,formatted_biol,station, sep = "_"))) -> run_sample_data
 
-station_map <- run_sample_data %>% 
+station_map_CF <- run_sample_data %>% 
+  filter(creek == "PvCF") %>% 
   distinct(creek, station) %>% 
   arrange(creek, station) %>% 
   group_by(creek) %>% 
@@ -196,15 +199,31 @@ station_map <- run_sample_data %>%
   ungroup() %>% 
   mutate(station_idx = row_number())  
 
-run_sample_data <- left_join(run_sample_data, station_map, by=c("creek","station"))  
+run_sample_data_cf <- left_join(run_sample_data, station_map_CF, by=c("creek","station"))  %>%
+  filter(creek == "PvCF") %>%  distinct(samplename,time,creek,biol,tech,station,station_num,SampleID) 
 
-run_sample_data %>% 
-  mutate(model_out_name = paste(time,creek,station_num,biol,tech, sep = "."),
-         model_out_name2 = paste(time,creek,station_idx,biol,tech, sep = ".")) -> run_sample_data
+run_sample_data_cf %>% 
+  mutate(model_out_name = paste(time,creek,station_num,biol, sep = "_")) -> run_sample_data_cf
 
-CF_combined_md_mod <- left_join(CF_combined_md,run_sample_data, by="SampleID")
+CF_combined_md_mod <- left_join(CF_combined_md,run_sample_data_cf, by="SampleID") 
 
 write.csv(CF_combined_md_mod, here("input-files","PvCF_master_diet_sample_metadata.csv"), row.names = F)
+
+
   
+```
+
+NOW WE HAVE TO HANDLE THE STATION MAPPING FOR tm DIFFERENTLY SINCE THERE WILL BE DIFFERENT ONES FOR 18s AND MiFish
+```{r}
+TM_combined_md <- left_join(TM_run_md, run_sample_data, by = c("sample" ="samplename", "samplename"="SampleID"))
+
+#Can't map stations to match due to the model input chucking out samples 
+TM_combined_md %>% 
+    mutate(station_alt = case_when(station == "BSkate" ~ "B_Skate",
+                                 station == "LnoseSkate"~"Lnose_skate",
+                                 station == "UnkVAQShr"~ "VAQShrimp",
+                                 TRUE ~ station)) -> TM_combined_md
+
+write.csv(TM_combined_md, here("input-files","TM_master_sample_metadata.csv"), row.names = F)
 ```
 
