@@ -9,4 +9,213 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-This is the script to use after amplification bias correction of the read depths, first we must use the the corrected tissue mixture results post amplification bias correction to determine how much bais is attributed to tissue composition
+This is the script to use after amplification bias correction of the read depths, first we must use the the corrected tissue mixture results post amplification bias correction to determine how much bias is attributed to tissue composition
+
+However, the first run of the mock community and amp bias correction didn't work as expected due to mock community read depth issues and 18S mock community construction of low input concentration leading to pipetting error. So for the first application we will bring use uncorrected proportions.
+```{r}
+library(here)
+library(tidyverse)
+```
+
+Bring in the tissue mixture ASV tables and metadata
+```{r}
+mock_data_18s <- read.csv(here("input-files","Mock_communities_18S_metadata.csv"), header=T, check.names = FALSE)
+
+mock_data_mf <- read.csv(here("input-files","Mock_communities_MiFish_metadata.csv"), header=T, check.names = FALSE)
+
+asv_data_18s <- read.csv(here("intermediate-files","CorrectionBiasRun","CorBias_18S_taxon_decontam_asv_table.csv"), header = T, check.names = F)
+
+asv_meta_18s <- read.table(here("data","CorrectionBias","tourmaline-CorBias_18S_16072025","00-data","metadata.tsv"), sep = "\t", header = T)
+
+asv_wild_data_18s <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB2_18S_taxon_decontam_asv_table.csv"), header = T, check.names = F)
+
+wild_md3 <- read.csv(here("input-files","FULL_CBrun2_metadata.csv"), header = T)
+
+asv_data_mf <- read.csv(here("intermediate-files","CorrectionBiasRun","CorBias_MiFish_taxon_decontam_asv_table.csv"), header = T, check.names = F)
+
+asv_meta_mf <- read.csv(here("input-files","CorrectionBias_run_metadata.csv"),header = T, check.names = F)
+
+mock_data_mf <- read.csv(here("input-files","Mock_communities_MiFish_metadata.csv"), header=T, check.names = FALSE)
+
+asv_wild_data_mf <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB2_MiFish_taxon_decontam_asv_table.csv"), header = T, check.names = F)
+
+expected_prop_mapTM <- read.csv(here("input-files","TM_master_sample_metadata.csv"), header = T, check.names = F)
+expected_prop_mapCtrF <- read.csv(here("input-files","PvCF_master_diet_sample_metadata.csv"), header = T, check.names = F)
+
+```
+
+Pull out the Tissue mixture data
+```{r}
+asv_meta_18s %>% 
+  filter(str_detect(Plate_ID, "Prey18S")) %>% 
+  filter(region == "TissueMix") -> TM_asv_meta18s
+
+# First, get the sample IDs you want to keep from the metadata
+samples_to_keep <- TM_asv_meta18s$sampleid
+
+# Find which samples_to_keep actually exist in asv_data
+existing_samples <- intersect(samples_to_keep, names(asv_data_18s))
+
+# Convert the ASV table to long format and filter for desired samples
+TM_asv_data18s <- asv_data_18s %>%
+  # Keep the taxonomy column
+  select(final_taxonomy, all_of(existing_samples)) %>%
+  # Convert to long format
+  pivot_longer(
+    cols = -final_taxonomy,
+    names_to = "sampleid",
+    values_to = "count"
+  ) %>%
+  # Filter to only include samples in your metadata
+  filter(sampleid %in% existing_samples)
+
+# The result is a long-format dataframe with taxonomy, sampleid, and count columns
+head(TM_asv_data18s)
+
+TM_asv_data_18s <- TM_asv_data18s %>%
+  left_join(TM_asv_meta18s, by = "sampleid") %>% 
+  select(final_taxonomy,sampleid,count,samplename)
+
+#### Mifish
+asv_meta_mf %>% 
+  filter(str_detect(Plate_ID, "MiFish")) %>% 
+  filter(region == "TissueMix") -> TM_asv_meta_mf
+
+# First, get the sample IDs you want to keep from the metadata
+samples_to_keep <- TM_asv_meta_mf$sampleid
+
+# Find which samples_to_keep actually exist in asv_data
+existing_samples <- intersect(samples_to_keep, names(asv_data_mf))
+
+# Convert the ASV table to long format and filter for desired samples
+TM_asv_datamf <- asv_data_mf %>%
+  # Keep the taxonomy column
+  select(final_taxonomy, all_of(existing_samples)) %>%
+  # Convert to long format
+  pivot_longer(
+    cols = -final_taxonomy,
+    names_to = "sampleid",
+    values_to = "count"
+  ) %>%
+  # Filter to only include samples in your metadata
+  filter(sampleid %in% existing_samples)
+
+# The result is a long-format dataframe with taxonomy, sampleid, and count columns
+head(TM_asv_datamf)
+
+TM_asv_data_mf <- TM_asv_datamf %>%
+  left_join(TM_asv_meta_mf, by = "sampleid") %>% 
+  select(final_taxonomy,sampleid,count,samplename,sp_abbrev)
+
+```
+```{r}
+# Function to extract final taxon
+extract_final_taxon <- function(full_taxonomy) {
+  # Split by semicolon and remove empty elements
+  taxa_levels <- str_split(full_taxonomy, ";")[[1]] %>% 
+    str_trim() %>% 
+    .[. != ""]
+  
+  # Work backwards through the taxonomy levels
+  for (i in length(taxa_levels):1) {
+    current_taxon <- taxa_levels[i]
+    # Skip if the taxon is NA or empty
+    if (!is.na(current_taxon) && current_taxon != "NA" && current_taxon != "") {
+      return(current_taxon)
+    }
+  }
+  
+  # If all levels are NA/empty, return NA
+  return(NA_character_)
+}
+```
+
+
+
+filter for input DNA for the 18S mixtures
+```{r}
+#parse species name from final taxonomy
+TM_asv_data_18s %>% 
+  mutate(species = map_chr(final_taxonomy, extract_final_taxon),
+         species = str_trim(species)) -> TM_asv_data_18s
+
+#get expected_prop data prepped
+expected_prop_mapTM_modified <- expected_prop_mapTM %>% 
+  filter(str_detect(Plate_ID, "Prey18S")) %>% 
+  rename("P18S_taxon_assign" = "18S_taxon_assign") %>%
+  select(sample, samplename, biol, tech,
+         Species, P18S_taxon_assign, Target_initial_mass, 
+         PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref) %>% 
+  distinct(sample, samplename,  biol, tech,
+           Species, P18S_taxon_assign, Target_initial_mass, 
+           PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref)
+  
+# Now create the long format for TissueMix
+expected_prop_mapTM_long <- expected_prop_mapTM_modified %>%
+  mutate(
+    species_type = "target",
+    initial_mass = Target_initial_mass,
+    proportion = prop_target
+  ) %>%
+  select(sample, samplename, biol, tech, species_type, Species, P18S_taxon_assign,
+         initial_mass, Mixture_final_mass, proportion) %>%
+  # Create reference species rows
+  bind_rows(
+    expected_prop_mapTM_modified %>%
+      mutate(
+        species_type = "reference",
+        Species = "Clupea pallasii",
+        P18S_taxon_assign = "Actinopteri",
+        initial_mass = PacHer_initial_mass,
+        proportion = prop_ref
+      ) %>%
+      select(sample, samplename, biol, tech, species_type, Species, P18S_taxon_assign,
+             initial_mass, Mixture_final_mass, proportion)
+  ) %>%
+  # Calculate actual_prop based on initial_mass and Mixture_final_mass
+  mutate(
+    actual_prop = initial_mass / Mixture_final_mass
+  )
+
+#parse sample name in asv_data
+
+
+#merge with the expected data for each marker
+TM_asv_md_18s <- left_join(TM_asv_data_18s,expected_prop_mapTM_long, by= c("samplename","species"="18S_taxon_assign")) 
+```
+
+filter for input DNA for MiFish markers
+```{r}
+
+```
+
+Recalc uncorrected proportion of reads to both herring and target species
+```{r}
+
+```
+
+bring in the expected proportions from the metadata and species map
+```{r}
+
+```
+
+calc difference in uncorrected and expected to determine correction factors
+```{r}
+
+```
+
+apply correction factors back to tissue mixture replicates
+```{r}
+
+```
+
+apply to the mock community as well
+```{r}
+
+```
+
+apply to the controlled feeding study scats
+```{r}
+
+```
+
