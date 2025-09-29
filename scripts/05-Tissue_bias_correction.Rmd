@@ -39,8 +39,9 @@ mock_data_mf <- read.csv(here("input-files","Mock_communities_MiFish_metadata.cs
 
 asv_wild_data_mf <- read.csv(here("intermediate-files", "Wild_CB_Samples", "Wild_CB2_MiFish_taxon_decontam_asv_table.csv"), header = T, check.names = F)
 
-expected_prop_mapTM <- read.csv(here("input-files","TM_master_sample_metadata.csv"), header = T, check.names = F)
-expected_prop_mapCtrF <- read.csv(here("input-files","PvCF_master_diet_sample_metadata.csv"), header = T, check.names = F)
+expected_prop_mapTM_18S <- read.csv(here("input-files","TM_master_sample_metadata_18S.csv"), header = T, check.names = F)
+expected_prop_mapTM_MF <- read.csv(here("input-files","TM_master_sample_metadata_MiF.csv"), header = T, check.names = F)
+
 
 ```
 
@@ -140,24 +141,24 @@ TM_asv_data_18s %>%
          species = str_trim(species)) -> TM_asv_data_18s
 
 #get expected_prop data prepped
-expected_prop_mapTM_modified <- expected_prop_mapTM %>% 
+expected_prop_mapTM_modified18S <- expected_prop_mapTM_18S %>% 
   filter(str_detect(Plate_ID, "Prey18S")) %>% 
   rename("P18S_taxon_assign" = "18S_taxon_assign") %>%
-  select(sample, samplename, biol, tech,
+  dplyr::select(sample, sampleid, samplename, biol, tech,
          Species, P18S_taxon_assign, Target_initial_mass, 
          PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref) %>% 
-  distinct(sample, samplename,  biol, tech,
+  distinct(sample, sampleid, samplename,  biol, tech,
            Species, P18S_taxon_assign, Target_initial_mass, 
            PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref)
   
 # Now create the long format for TissueMix
-expected_prop_mapTM_long <- expected_prop_mapTM_modified %>%
+expected_prop_mapTM_18Slong <- expected_prop_mapTM_modified18S %>%
   mutate(
     species_type = "target",
     initial_mass = Target_initial_mass,
     proportion = prop_target
   ) %>%
-  select(sample, samplename, biol, tech, species_type, Species, P18S_taxon_assign,
+  dplyr::select(sample, sampleid, samplename, biol, tech, species_type, Species, P18S_taxon_assign,
          initial_mass, Mixture_final_mass, proportion) %>%
   # Create reference species rows
   bind_rows(
@@ -169,7 +170,7 @@ expected_prop_mapTM_long <- expected_prop_mapTM_modified %>%
         initial_mass = PacHer_initial_mass,
         proportion = prop_ref
       ) %>%
-      select(sample, samplename, biol, tech, species_type, Species, P18S_taxon_assign,
+      dplyr::select(sample, sampleid, samplename, biol, tech, species_type, Species, P18S_taxon_assign,
              initial_mass, Mixture_final_mass, proportion)
   ) %>%
   # Calculate actual_prop based on initial_mass and Mixture_final_mass
@@ -177,45 +178,1581 @@ expected_prop_mapTM_long <- expected_prop_mapTM_modified %>%
     actual_prop = initial_mass / Mixture_final_mass
   )
 
-#parse sample name in asv_data
-
-
-#merge with the expected data for each marker
-TM_asv_md_18s <- left_join(TM_asv_data_18s,expected_prop_mapTM_long, by= c("samplename","species"="18S_taxon_assign")) 
 ```
 
-filter for input DNA for MiFish markers
+merge the 18S asv data and expected data to calculate correction factors
+```{r}
+library(tidyverse)
+
+# First, let's make sure we have the sampleid in both datasets
+# For the expected data, we already have sampleid
+# For the ASV data, we need to join with the metadata to get sampleid
+TM_asv_data_18s %>%
+  select(sampleid,count,species) -> TM_asv_data_18sjoin
+
+TM_asv_expected_18S <- left_join(expected_prop_mapTM_18Slong,TM_asv_data_18sjoin, by=c("sampleid","P18S_taxon_assign"="species"))
+
+```
+
+```{r}
+library(tidyverse)
+
+# First, let's create a clean dataset with only the expected species
+TM_asv_expected_18S_2 <- TM_asv_expected_18S %>%
+  # Remove any rows with NA in count (failed sequencing)
+  filter(!is.na(count)) %>%
+  # Group by sampleid and check if we have both target and reference
+  group_by(sampleid) %>%
+  # Check if we have exactly 2 rows (target and reference)
+  filter(n() == 2) %>%
+  ungroup()
+
+# Calculate observed proportions for the clean data
+observed_props <- TM_asv_expected_18S_2 %>%
+  group_by(sampleid,sample,biol,tech) %>%
+  mutate(total_count = sum(count)) %>%
+  ungroup() %>%
+  group_by(sampleid,sample, biol,tech,Species, P18S_taxon_assign) %>%
+  summarise(observed_prop = sum(count) / first(total_count), .groups = "drop")
+
+# Prepare expected proportions
+expected_props <- TM_asv_expected_18S_2 %>%
+  dplyr::select(sampleid, sample,expected_species = Species, taxon_assign = P18S_taxon_assign, expected_prop = proportion)
+
+# Check that each sample has exactly 2 rows (target and reference)
+sample_check <- observed_props %>%
+  group_by(sampleid) %>%
+  summarise(n_species = n(), .groups = "drop")
+
+if(any(sample_check$n_species != 2)) {
+  warning("Some samples don't have exactly 2 species. Please check the data.")
+  print(sample_check %>% filter(n_species != 2))
+} else {
+  message("All samples have exactly 2 species (target and reference). Proceeding with correction factor calculation.")
+}
+
+```
+
+Now calculate correction factors
+```{r}
+# First, let's ensure we have the observed and expected proportions calculated correctly
+TM_asv_expected_clean <- TM_asv_expected_18S_2 %>%
+  group_by(sampleid) %>%
+  mutate(
+    total_count = sum(count),
+    observed_prop = count / total_count
+  ) %>%
+  # Check if any species in the sample has proportion 0 or 1
+  mutate(has_extreme_prop = any(observed_prop == 0 | observed_prop == 1)) %>%
+  # Remove entire samples with extreme proportions
+  filter(!has_extreme_prop) %>%
+  select(-has_extreme_prop) %>%
+  ungroup()
+  
+```
+
+Now do that for MiFish tissue mixtures
+```{r}
+TM_asv_data_mf %>% 
+  mutate(species = map_chr(final_taxonomy, extract_final_taxon),
+         species = str_trim(species)) -> TM_asv_data_mf
+
+# Aggregate ASV data by sampleid and species
+TM_asv_data_mf %>%
+  select(sampleid, count, species, sp_abbrev) %>%
+  mutate(species = str_trim(species)) %>%  # Remove leading/trailing whitespace
+  mutate(species = str_squish(species)) %>%  # Remove extra internal whitespace
+  distinct() %>% 
+  filter(count > 0) -> TM_asv_data_MFjoin
+# Add genus to ASV data
+TM_asv_data_MFjoin <- TM_asv_data_MFjoin %>%
+  mutate(genus = word(species, 1))
+
+
+# First, let's create a mapping between genus and species for the target species
+species_genus_map <- expected_prop_mapTM_MF %>%
+  distinct(Species, MiFish_taxon_assign) %>%
+  filter(!is.na(Species), !is.na(MiFish_taxon_assign)) %>% 
+  mutate(genus = word(MiFish_taxon_assign,1))
+
+
+# Prepare expected proportions as before
+expected_prop_mapTM_MF_modified <- expected_prop_mapTM_MF %>% 
+  filter(str_detect(Plate_ID, "MiFish")) %>% 
+  dplyr::select(sample, sampleid, samplename, biol, tech,
+         Species, MiFish_taxon_assign, Target_initial_mass, 
+         PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref) %>% 
+  distinct(sample, sampleid, samplename,  biol, tech,
+           Species, MiFish_taxon_assign, Target_initial_mass, 
+           PacHer_initial_mass, Mixture_final_mass, prop_target, prop_ref) %>% 
+  mutate(MFgenus = word(MiFish_taxon_assign,1))
+
+# Create long format for TissueMix
+expected_prop_mapTM_MF_long <- expected_prop_mapTM_MF_modified %>%
+  mutate(
+    species_type = "target",
+    initial_mass = Target_initial_mass,
+    proportion = prop_target
+  ) %>%
+  dplyr::select(sample, sampleid, samplename, biol, tech, species_type, Species, MiFish_taxon_assign, MFgenus,
+         initial_mass, Mixture_final_mass, proportion) %>%
+  bind_rows(
+    expected_prop_mapTM_MF_modified %>%
+      mutate(
+        species_type = "reference",
+        Species = "Clupea pallasii",
+        MiFish_taxon_assign = "Clupea pallasii",
+        initial_mass = PacHer_initial_mass,
+        proportion = prop_ref
+      ) %>%
+      dplyr::select(sample, sampleid, samplename, biol, tech, species_type, Species, MiFish_taxon_assign,MFgenus,
+             initial_mass, Mixture_final_mass, proportion)
+  ) %>%
+  mutate(
+    actual_prop = initial_mass / Mixture_final_mass
+  )
+
+# Split expected data
+expected_target <- expected_prop_mapTM_MF_long %>% filter(species_type == "target")
+expected_ref <- expected_prop_mapTM_MF_long %>% filter(species_type == "reference")
+
+# For target: first try exact match by Species
+target_exact <- left_join(expected_target, 
+                         TM_asv_data_MFjoin %>% select(sampleid, count, species), 
+                         by = c("sampleid", "MiFish_taxon_assign" = "species"))
+
+# For the ones that didn't match, try genus match
+target_genus <- target_exact %>% filter(is.na(count)) %>%
+  select(-count) %>%
+  left_join(TM_asv_data_MFjoin %>%
+              group_by(sampleid, genus) %>%
+              summarize(count = sum(count), .groups = 'drop'),
+            by = c("sampleid", "MFgenus" = "genus"))
+
+# Combine target matches
+target_matched <- bind_rows(target_exact,target_genus)
+
+# For reference: exact match
+ref_matched <- left_join(expected_ref,
+                        TM_asv_data_MFjoin %>% select(sampleid, count, species),
+                        by = c("sampleid", "MiFish_taxon_assign" = "species")) %>% select(-MFgenus)
+
+#check the samples with missing count data after join to see what species were found in the asv data
+target_matched %>% 
+  filter(is.na(count)) -> target_na_samples
+
+target_matched %>% 
+  filter(count == 0) -> target_zero # no more zeros
+
+if(nrow(target_na_samples) > 0) {
+  cat("\nTarget species NA samples:", nrow(target_na_samples), "\n")
+  print(target_na_samples)
+  
+  # Pull ALL ASV data for these samples to see what's actually there
+  cat("\nASV data for target NA samples:\n")
+  target_na_asv_data <- TM_asv_data_MFjoin %>%
+    filter(sampleid %in% target_na_samples$sampleid) %>%
+    group_by(sampleid, species, genus) %>%
+    summarize(total_count = sum(count), .groups = 'drop') %>%
+    arrange(sampleid, desc(total_count))
+  
+  print(target_na_asv_data, n = 100)
+}
+
+target_na_asv_data %>% filter(total_count > 0) -> target_na_asv_data
+
+ref_matched %>% 
+  filter(is.na(count)) -> ref_na_samples
+
+if(nrow(ref_na_samples) > 0) {
+  cat("\nReference species NA samples:", nrow(ref_na_samples), "\n")
+  print(ref_na_samples)
+  
+  # Pull ALL ASV data for these samples to see what's actually there
+  cat("\nASV data for reference NA samples:\n")
+  ref_na_asv_data <- TM_asv_data_MFjoin %>%
+    filter(sampleid %in% ref_na_samples$sampleid) %>%
+    group_by(sampleid, species) %>%
+    summarize(total_count = sum(count), .groups = 'drop') %>%
+    arrange(sampleid, desc(total_count))
+  
+  print(ref_na_asv_data, n = 100)
+}
+
+#all the missing ref_na samples don't have asv data, two we know didn't get tagged, and the others presumably didn't make it in.
+
+```
+
+
+Okay there are some naming things but we can sort that out by joining by genus again
+```{r}
+target_na_samples %>% 
+  select(-count) %>% 
+  left_join(target_na_asv_data, by=c("sampleid","MFgenus"="genus")) %>% 
+  filter(!is.na(total_count)) %>% 
+  rename("count"="total_count") %>% 
+  select(-MiFish_taxon_assign) %>% 
+  rename("MiFish_taxon_assign"="species") -> target_na_data_fix1 #accept the taxon assign from the actual run
+
+target_na_samples %>% 
+  select(-count) %>% 
+  left_join(target_na_asv_data, by=c("sampleid","MFgenus"="genus")) %>% 
+  filter(is.na(total_count)) %>% 
+  select(!c(species,total_count)) %>% 
+  distinct() -> target_na_samples_2 
+
+target_matched %>% 
+  filter(!is.na(count)) -> target_matched_noNA
+
+
+#only 14 samples that need some fixing now, let's pull out the ones that failed to also have reads to the reference/failed to seq
+
+target_na_samples_2 <- target_na_samples_2 %>%
+  filter(!sampleid %in% ref_na_samples$sampleid)
+
+if(nrow(target_na_samples_2) > 0) {
+  cat("\nTarget species NA samples:", nrow(target_na_samples_2), "\n")
+  print(target_na_samples_2)
+  
+  # Pull ALL ASV data for these samples to see what's actually there
+  cat("\nASV data for target NA samples:\n")
+  target_na_asv_data_2 <- TM_asv_data_MFjoin %>%
+    filter(sampleid %in% target_na_samples_2$sampleid) %>%
+    group_by(sampleid, species, genus) %>%
+    summarize(total_count = sum(count), .groups = 'drop') %>%
+    arrange(sampleid, desc(total_count))
+  
+  print(target_na_asv_data_2, n = 100)
+}
+
+#okay so that sample didn't amplify anything other than herring, so let's just toss it
+
+
+```
+
+```{r}
+#make sure the duplicates are removed
+target_matched_2 <- bind_rows(target_na_data_fix1, target_matched_noNA) %>%
+  distinct(sampleid, count, .keep_all = TRUE) %>% select(-MFgenus)
+
+#now let's combine the target and reference so we can run the correction factor scripts
+combined_mf_asv_expected_data <- bind_rows(
+  ref_matched %>% semi_join(target_matched_2, by = "sampleid"),
+  target_matched_2 %>% semi_join(ref_matched, by = "sampleid")
+)
+```
+
+okay now we can run the correction factor calculation scirpts
+```{r}
+# Calculate observed proportions for the clean data
+observed_props_mf <- combined_mf_asv_expected_data %>%
+  group_by(sampleid,sample,biol,tech) %>%
+  mutate(total_count = sum(count)) %>%
+  ungroup() %>%
+  group_by(sampleid,sample, biol,tech,Species, MiFish_taxon_assign) %>%
+  summarise(observed_prop = sum(count) / first(total_count), .groups = "drop")
+
+# Prepare expected proportions
+expected_props_mf <- combined_mf_asv_expected_data %>%
+  dplyr::select(sampleid, sample,expected_species = Species, taxon_assign = MiFish_taxon_assign, expected_prop = proportion)
+
+# Check that each sample has exactly 2 rows (target and reference)
+sample_check <- observed_props_mf %>%
+  group_by(sampleid) %>%
+  summarise(n_species = n(), .groups = "drop")
+
+if(any(sample_check$n_species != 2)) {
+  warning("Some samples don't have exactly 2 species. Please check the data.")
+  print(sample_check %>% filter(n_species != 2))
+} else {
+  message("All samples have exactly 2 species (target and reference). Proceeding with correction factor calculation.")
+}
+
+```
+
+Now get the MiFish df prepped for the actual correction factor calculation functions
+```{r}
+# First, let's ensure we have the observed and expected proportions calculated correctly
+TM_asv_expected_clean_MF <- combined_mf_asv_expected_data %>%
+  group_by(sampleid) %>%
+  mutate(
+    total_count = sum(count),
+    observed_prop = count / total_count
+  ) %>%
+  # Check if any species in the sample has proportion 0 or 1
+  mutate(has_extreme_prop = any(observed_prop == 0 | observed_prop == 1)) %>%
+  # Remove entire samples with extreme proportions
+  filter(!has_extreme_prop) %>%
+  select(-has_extreme_prop) %>%
+  ungroup()
+  
+```
+Original development scripts for the correction factors
+```{r}
+library(tidyverse)
+library(MASS) # For robust statistical methods
+
+# Explicitly use dplyr select to avoid conflicts
+select <- dplyr::select
+
+# Calculate all three types of correction factors for each sample
+correction_factors_per_sample <- TM_asv_expected_clean %>%
+  filter(Species != "Clupea pallasii") %>%
+  mutate(
+    # Multiplicative correction factor
+    multiplicative_cf = proportion / observed_prop,
+    
+    # Additive correction value - ensure it moves toward expected
+    additive_cf = proportion - observed_prop,
+    
+    # Ratio-based correction (alternative multiplicative approach)
+    ratio_cf = (proportion * (1 - observed_prop)) / (observed_prop * (1 - proportion))
+  ) %>%
+  select(sampleid, Species, P18S_taxon_assign, biol, tech, proportion, observed_prop, 
+         multiplicative_cf, additive_cf, ratio_cf)
+
+# Debug: Check if correction factors are different by species
+print("Checking correction factors by species:")
+correction_factors_per_sample %>%
+  group_by(Species, P18S_taxon_assign) %>%
+  summarise(
+    mean_multiplicative = mean(multiplicative_cf),
+    mean_additive = mean(additive_cf),
+    mean_ratio = mean(ratio_cf),
+    n = n()
+  ) %>%
+  print(n = Inf)
+
+# Function to calculate M-estimator for each correction type - FIXED GROUPING
+calculate_m_estimator <- function(correction_values) {
+  # Remove any NA or infinite values
+  correction_values <- correction_values[is.finite(correction_values)]
+  
+  if (length(correction_values) < 2) {
+    return(ifelse(length(correction_values) == 1, correction_values[1], NA_real_))
+  }
+  
+  tryCatch({
+    # Create a simple data frame for rlm
+    df <- data.frame(values = correction_values)
+    robust_fit <- rlm(values ~ 1, data = df)
+    return(coef(robust_fit)[1])
+  }, error = function(e) {
+    return(median(correction_values, na.rm = TRUE))
+  })
+}
+
+# Calculate M-estimator for each correction type for each species - FIXED
+correction_data <- correction_factors_per_sample %>%
+  group_by(Species, P18S_taxon_assign) %>%
+  summarise(
+    multiplicative_m_estimator = calculate_m_estimator(multiplicative_cf),
+    additive_m_estimator = calculate_m_estimator(additive_cf),
+    ratio_m_estimator = calculate_m_estimator(ratio_cf),
+    n_samples = n(),
+    .groups = "drop"
+  )
+
+print("Species-specific correction factors:")
+print(correction_data)
+
+# Apply all three correction methods
+corrected_asv_data <- TM_asv_expected_clean %>%
+  left_join(correction_data, by = c("Species", "P18S_taxon_assign")) %>%
+  group_by(sampleid) %>%
+  mutate(
+    # Calculate corrected proportions first (without changing totals)
+    
+    # Multiplicative correction - adjust proportions only
+    corrected_prop_multiplicative = ifelse(
+      Species != "Clupea pallasii" & !is.na(multiplicative_m_estimator),
+      observed_prop * multiplicative_m_estimator,
+      observed_prop
+    ),
+    
+    # Additive correction - adjust proportions only
+    corrected_prop_additive = ifelse(
+      Species != "Clupea pallasii" & !is.na(additive_m_estimator),
+      observed_prop + additive_m_estimator,
+      observed_prop
+    ),
+    
+    # Ratio-based correction - adjust proportions only
+    corrected_prop_ratio = ifelse(
+      Species != "Clupea pallasii" & !is.na(ratio_m_estimator),
+      observed_prop * ratio_m_estimator,
+      observed_prop
+    )
+  ) %>%
+  # Renormalize proportions to sum to 1 for each sample
+  mutate(
+    # Multiplicative method renormalization
+    total_prop_multiplicative = sum(corrected_prop_multiplicative),
+    corrected_prop_multiplicative = corrected_prop_multiplicative / total_prop_multiplicative,
+    
+    # Additive method renormalization
+    total_prop_additive = sum(corrected_prop_additive),
+    corrected_prop_additive = corrected_prop_additive / total_prop_additive,
+    
+    # Ratio method renormalization
+    total_prop_ratio = sum(corrected_prop_ratio),
+    corrected_prop_ratio = corrected_prop_ratio / total_prop_ratio
+  ) %>%
+  # Calculate corrected counts based on original total_count
+  mutate(
+    corrected_count_multiplicative = round(corrected_prop_multiplicative * first(total_count)),
+    corrected_count_additive = round(corrected_prop_additive * first(total_count)),
+    corrected_count_ratio = round(corrected_prop_ratio * first(total_count))
+  ) %>%
+  ungroup() %>%
+  # Remove temporary columns
+  select(-starts_with("total_prop_"))
+
+# Create comparison dataset with all three methods
+comparison_data <- corrected_asv_data %>%
+  filter(!is.na(proportion)) %>%
+  group_by(sampleid, Species, P18S_taxon_assign) %>%
+  summarise(
+    observed_prop = first(observed_prop),
+    corrected_prop_multiplicative = first(corrected_prop_multiplicative),
+    corrected_prop_additive = first(corrected_prop_additive),
+    corrected_prop_ratio = first(corrected_prop_ratio),
+    expected_prop = first(proportion),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    TM_asv_meta18s %>% select(sampleid, samplename),
+    by = "sampleid"
+  )
+
+# Create a comprehensive summary with method ranking
+correction_summary <- comparison_data %>%
+  group_by(Species, P18S_taxon_assign) %>%
+  summarise(
+    n_samples = n(),
+    mean_observed_prop = mean(observed_prop),
+    mean_expected_prop = mean(expected_prop),
+    
+    # Mean corrected proportions for each method
+    mean_corrected_multiplicative = mean(corrected_prop_multiplicative),
+    mean_corrected_additive = mean(corrected_prop_additive),
+    mean_corrected_ratio = mean(corrected_prop_ratio),
+    
+    # Absolute differences from expected
+    abs_diff_observed = abs(mean_observed_prop - mean_expected_prop),
+    abs_diff_multiplicative = abs(mean_corrected_multiplicative - mean_expected_prop),
+    abs_diff_additive = abs(mean_corrected_additive - mean_expected_prop),
+    abs_diff_ratio = abs(mean_corrected_ratio - mean_expected_prop),
+    
+    # Improvement percentages
+    improvement_multiplicative = 1 - (abs_diff_multiplicative / abs_diff_observed),
+    improvement_additive = 1 - (abs_diff_additive / abs_diff_observed),
+    improvement_ratio = 1 - (abs_diff_ratio / abs_diff_observed),
+    
+    .groups = "drop"
+  ) %>%
+  # Determine which method performs best for each species
+  mutate(
+    # Find the method with smallest absolute difference
+    best_method = case_when(
+      abs_diff_multiplicative == pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) ~ "Multiplicative",
+      abs_diff_additive == pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) ~ "Additive",
+      abs_diff_ratio == pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) ~ "Ratio"
+    ),
+    
+    # Calculate how close the best method gets to expected (0 = no improvement, 1 = perfect)
+    best_method_accuracy = 1 - (pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) / abs_diff_observed),
+    
+    # Direction of correction - did it move toward expected?
+    moved_toward_expected_multiplicative = abs_diff_multiplicative < abs_diff_observed,
+    moved_toward_expected_additive = abs_diff_additive < abs_diff_observed,
+    moved_toward_expected_ratio = abs_diff_ratio < abs_diff_observed
+  )
+
+print("Correction summary:")
+print(correction_summary)
+
+
+# Create a detailed ranking table
+method_ranking <- correction_summary %>%
+  select(Species, P18S_taxon_assign, best_method, best_method_accuracy, 
+         abs_diff_observed, abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio,
+         moved_toward_expected_multiplicative, moved_toward_expected_additive, moved_toward_expected_ratio) %>%
+  arrange(desc(best_method_accuracy))
+
+print("Method Performance Ranking:")
+print(method_ranking)
+
+# Create a summary of overall method performance
+overall_performance <- correction_summary %>%
+  summarise(
+    multiplicative_wins = sum(best_method == "Multiplicative"),
+    additive_wins = sum(best_method == "Additive"),
+    ratio_wins = sum(best_method == "Ratio"),
+    multiplicative_improves = sum(moved_toward_expected_multiplicative),
+    additive_improves = sum(moved_toward_expected_additive),
+    ratio_improves = sum(moved_toward_expected_ratio),
+    avg_improvement_multiplicative = mean(improvement_multiplicative, na.rm = TRUE),
+    avg_improvement_additive = mean(improvement_additive, na.rm = TRUE),
+    avg_improvement_ratio = mean(improvement_ratio, na.rm = TRUE),
+    overall_best_method = case_when(
+      multiplicative_wins > additive_wins & multiplicative_wins > ratio_wins ~ "Multiplicative",
+      additive_wins > multiplicative_wins & additive_wins > ratio_wins ~ "Additive",
+      ratio_wins > multiplicative_wins & ratio_wins > additive_wins ~ "Ratio",
+      TRUE ~ "Tie"
+    )
+  )
+
+print("Overall Method Performance:")
+print(overall_performance)
+
+```
+
+Now the same workflow but with taxon_assign as the correction_factor level included
+```{r}
+# Calculate all three types of correction factors for each sample - SPECIES LEVEL
+correction_factors_per_sample_species <- TM_asv_expected_clean %>%
+  filter(Species != "Clupea pallasii") %>%
+  mutate(
+    multiplicative_cf = proportion / observed_prop,
+    additive_cf = proportion - observed_prop,
+    ratio_cf = (proportion * (1 - observed_prop)) / (observed_prop * (1 - proportion))
+  ) %>%
+  select(sampleid, Species, P18S_taxon_assign, proportion, observed_prop, 
+         multiplicative_cf, additive_cf, ratio_cf)
+
+# Calculate all three types of correction factors for each sample - TAXON LEVEL
+correction_factors_per_sample_taxon <- TM_asv_expected_clean %>%
+  filter(Species != "Clupea pallasii") %>%
+  mutate(
+    multiplicative_cf = proportion / observed_prop,
+    additive_cf = proportion - observed_prop,
+    ratio_cf = (proportion * (1 - observed_prop)) / (observed_prop * (1 - proportion))
+  ) %>%
+  group_by(sampleid, P18S_taxon_assign) %>%
+  summarise(
+    proportion = sum(proportion),
+    observed_prop = sum(observed_prop),
+    multiplicative_cf = proportion / observed_prop,
+    additive_cf = proportion - observed_prop,
+    ratio_cf = (proportion * (1 - observed_prop)) / (observed_prop * (1 - proportion)),
+    n_species = n_distinct(Species),
+    .groups = "drop"
+  )
+
+# Calculate all three types of correction factors for each sample - SPECIES LEVEL for MiFish
+correction_factors_per_sample_species_MF <- TM_asv_expected_clean_MF %>%
+  filter(Species != "Clupea pallasii") %>%
+  mutate(
+    multiplicative_cf = proportion / observed_prop,
+    additive_cf = proportion - observed_prop,
+    ratio_cf = (proportion * (1 - observed_prop)) / (observed_prop * (1 - proportion))
+  ) %>%
+  select(sampleid, Species, MiFish_taxon_assign, proportion, observed_prop, 
+         multiplicative_cf, additive_cf, ratio_cf)
+
+# Calculate all three types of correction factors for each sample - TAXON LEVEL for MiFish
+correction_factors_per_sample_taxon_MF <- TM_asv_expected_clean_MF %>%
+  filter(Species != "Clupea pallasii") %>%
+  mutate(
+    multiplicative_cf = proportion / observed_prop,
+    additive_cf = proportion - observed_prop,
+    ratio_cf = (proportion * (1 - observed_prop)) / (observed_prop * (1 - proportion))
+  ) %>%
+  group_by(sampleid, MiFish_taxon_assign) %>%
+  summarise(
+    proportion = sum(proportion),
+    observed_prop = sum(observed_prop),
+    multiplicative_cf = proportion / observed_prop,
+    additive_cf = proportion - observed_prop,
+    ratio_cf = (proportion * (1 - observed_prop)) / (observed_prop * (1 - proportion)),
+    n_species = n_distinct(Species),
+    .groups = "drop"
+  )
+
+
+```
+
+the functions to do all the following steps
+```{r}
+create_combined_correction_data <- function(correction_factors_species, 
+                                           correction_factors_taxon, 
+                                           taxon_assign_col,
+                                           reference_species = "Clupea pallasii",
+                                           reference_taxon) {
+  
+  # Species-level correction factors
+  correction_data_species <- correction_factors_species %>%
+    group_by(Species, !!sym(taxon_assign_col)) %>%
+    summarise(
+      multiplicative_m_estimator = calculate_m_estimator(multiplicative_cf),
+      additive_m_estimator = calculate_m_estimator(additive_cf),
+      ratio_m_estimator = calculate_m_estimator(ratio_cf),
+      n_samples = n(),
+      .groups = "drop"
+    ) %>%
+    mutate(correction_level = "species")
+  
+  # Taxon-level correction factors
+  correction_data_taxon <- correction_factors_taxon %>%
+    group_by(!!sym(taxon_assign_col)) %>%
+    summarise(
+      multiplicative_m_estimator = calculate_m_estimator(multiplicative_cf),
+      additive_m_estimator = calculate_m_estimator(additive_cf),
+      ratio_m_estimator = calculate_m_estimator(ratio_cf),
+      n_samples = n(),
+      mean_species_per_sample = mean(n_species),
+      .groups = "drop"
+    ) %>%
+    mutate(correction_level = "taxon")
+  
+  # Combine with consistent column names
+  correction_data_combined <- bind_rows(
+    correction_data_species,
+    correction_data_taxon %>% mutate(Species = NA_character_)
+  )
+  
+  # Add reference species for both levels
+  reference_row <- tibble(
+    Species = reference_species,
+    !!taxon_assign_col := reference_taxon,
+    multiplicative_m_estimator = 1.0,
+    additive_m_estimator = 0.0,
+    ratio_m_estimator = 1.0,
+    n_samples = NA_integer_,
+    mean_species_per_sample = NA_real_,
+    correction_level = "reference"
+  )
+  
+  correction_data_combined <- bind_rows(correction_data_combined, reference_row)
+  
+  return(correction_data_combined)
+}
+
+# Calculate M-estimators for both levels
+calculate_m_estimator <- function(correction_values) {
+  correction_values <- correction_values[is.finite(correction_values)]
+  if (length(correction_values) < 2) {
+    return(ifelse(length(correction_values) == 1, correction_values[1], NA_real_))
+  }
+  tryCatch({
+    df <- data.frame(values = correction_values)
+    robust_fit <- rlm(values ~ 1, data = df)
+    return(coef(robust_fit)[1])
+  }, error = function(e) {
+    return(median(correction_values, na.rm = TRUE))
+  })
+}
+
+
+# Universal correction function that can use either level
+apply_correction <- function(asv_data, correction_df, taxon_assign_col, 
+                             correction_level = "species", # "species" or "taxon"
+                             reference_species = "Clupea pallasii") {
+  
+  # Calculate observed_prop if needed
+  if (!"observed_prop" %in% names(asv_data)) {
+    asv_data <- asv_data %>%
+      group_by(sampleid) %>%
+      mutate(observed_prop = count / sum(count)) %>%
+      ungroup()
+  }
+  
+  # Filter correction data for the appropriate level
+  if (correction_level == "species") {
+    correction_df_level <- correction_df %>%
+      filter(correction_level == "species" | correction_level == "reference")
+    join_by <- c("Species", taxon_assign_col)
+  } else {
+    correction_df_level <- correction_df %>%
+      filter(correction_level == "taxon" | correction_level == "reference")
+    join_by <- taxon_assign_col
+  }
+  
+  # Apply correction
+  corrected_asv_data <- asv_data %>%
+    left_join(correction_df_level, by = join_by) %>%
+    group_by(sampleid) %>%
+    mutate(
+      corrected_prop_multiplicative = ifelse(
+        Species != reference_species & !is.na(multiplicative_m_estimator),
+        observed_prop * multiplicative_m_estimator,
+        observed_prop
+      ),
+      
+      corrected_prop_additive = ifelse(
+        Species != reference_species & !is.na(additive_m_estimator),
+        observed_prop + additive_m_estimator,
+        observed_prop
+      ),
+      
+      corrected_prop_ratio = ifelse(
+        Species != reference_species & !is.na(ratio_m_estimator),
+        observed_prop * ratio_m_estimator,
+        observed_prop
+      )
+    ) %>%
+    # Renormalize and calculate counts (same as before)
+    mutate(
+      total_prop_multiplicative = sum(corrected_prop_multiplicative, na.rm = TRUE),
+      corrected_prop_multiplicative = corrected_prop_multiplicative / total_prop_multiplicative,
+      total_prop_additive = sum(corrected_prop_additive, na.rm = TRUE),
+      corrected_prop_additive = corrected_prop_additive / total_prop_additive,
+      total_prop_ratio = sum(corrected_prop_ratio, na.rm = TRUE),
+      corrected_prop_ratio = corrected_prop_ratio / total_prop_ratio
+    ) %>%
+    mutate(
+      corrected_count_multiplicative = round(corrected_prop_multiplicative * first(total_count)),
+      corrected_count_additive = round(corrected_prop_additive * first(total_count)),
+      corrected_count_ratio = round(corrected_prop_ratio * first(total_count))
+    ) %>%
+    ungroup() %>%
+    select(-starts_with("total_prop_")) %>%
+    mutate(correction_level_applied = correction_level)
+  
+  return(corrected_asv_data)
+}
+
+```
+
+Correction data for both markers using the functions
+```{r}
+# Usage for 18S marker (if you want to use the same function)
+correction_data_combined_18S <- create_combined_correction_data(
+  correction_factors_species = correction_factors_per_sample_species,
+  correction_factors_taxon = correction_factors_per_sample_taxon,
+  taxon_assign_col = "P18S_taxon_assign",
+  reference_species = "Clupea pallasii",
+  reference_taxon = "Actinopteri"
+)
+
+# Usage for MF marker
+correction_data_combined_MF <- create_combined_correction_data(
+  correction_factors_species = correction_factors_per_sample_species_MF,
+  correction_factors_taxon = correction_factors_per_sample_taxon_MF,
+  taxon_assign_col = "MiFish_taxon_assign",
+  reference_species = "Clupea pallasii",
+  reference_taxon = "Clupea pallasii"  
+)
+```
+
+
+```{r}
+# Usage examples:
+# For tissue mixture samples where we know the species composition
+corrected_species_level_18S <- apply_correction(
+  asv_data = TM_asv_expected_clean,
+  correction_df = correction_data_combined_18S,
+  taxon_assign_col = "P18S_taxon_assign",
+  correction_level = "species"
+)
+
+# Or use the dedicated taxon aggregation function
+corrected_taxon_level_18S <- apply_correction(
+  asv_data = TM_asv_expected_clean,
+  correction_df = correction_data_combined_18S,
+  taxon_assign_col = "P18S_taxon_assign"
+)
+
+# For tissue mixture samples where we know the species composition
+corrected_species_level_MF<- apply_correction(
+  asv_data = TM_asv_expected_clean_MF,
+  correction_df = correction_data_combined_MF,
+  taxon_assign_col = "MiFish_taxon_assign",
+  correction_level = "species"
+)
+
+# Or use the dedicated taxon aggregation function
+corrected_taxon_level_MF <- apply_correction(
+  asv_data = TM_asv_expected_clean_MF,
+  correction_df = correction_data_combined_MF,
+  taxon_assign_col = "MiFish_taxon_assign"
+)
+
+print("All correction methods applied successfully!")
+```
+
+The functions to compare methods of correction for both species and taxon and visualize them
+```{r}
+# More flexible comparison function
+create_comparison_data <- function(corrected_data, correction_level, taxon_assign_col, meta_data) {
+  comparison_data <- corrected_data %>%
+    filter(!is.na(proportion)) %>%
+    group_by(sampleid, Species, !!sym(taxon_assign_col)) %>%
+    summarise(
+      observed_prop = first(observed_prop),
+      corrected_prop_multiplicative = first(corrected_prop_multiplicative),
+      corrected_prop_additive = first(corrected_prop_additive),
+      corrected_prop_ratio = first(corrected_prop_ratio),
+      expected_prop = first(proportion),
+      .groups = "drop"
+    )
+  
+  # Join with metadata if it has the sampleid column
+  if ("sampleid" %in% names(meta_data)) {
+    comparison_data <- comparison_data %>%
+      left_join(meta_data %>% select(sampleid, samplename), by = "sampleid")
+  }
+  
+  comparison_data <- comparison_data %>%
+    mutate(correction_level = correction_level)
+  
+  return(comparison_data)
+}
+
+
+
+# Updated summary function
+create_correction_summary <- function(comparison_data, taxon_assign_col) {
+  correction_summary <- comparison_data %>%
+    group_by(Species, !!sym(taxon_assign_col), correction_level) %>%
+    summarise(
+      n_samples = n(),
+      mean_observed_prop = mean(observed_prop),
+      mean_expected_prop = mean(expected_prop),
+      
+      mean_corrected_multiplicative = mean(corrected_prop_multiplicative),
+      mean_corrected_additive = mean(corrected_prop_additive),
+      mean_corrected_ratio = mean(corrected_prop_ratio),
+      
+      abs_diff_observed = abs(mean_observed_prop - mean_expected_prop),
+      abs_diff_multiplicative = abs(mean_corrected_multiplicative - mean_expected_prop),
+      abs_diff_additive = abs(mean_corrected_additive - mean_expected_prop),
+      abs_diff_ratio = abs(mean_corrected_ratio - mean_expected_prop),
+      
+      improvement_multiplicative = 1 - (abs_diff_multiplicative / abs_diff_observed),
+      improvement_additive = 1 - (abs_diff_additive / abs_diff_observed),
+      improvement_ratio = 1 - (abs_diff_ratio / abs_diff_observed),
+      
+      .groups = "drop"
+    ) %>%
+    mutate(
+      best_method = case_when(
+        abs_diff_multiplicative == pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) ~ "Multiplicative",
+        abs_diff_additive == pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) ~ "Additive",
+        abs_diff_ratio == pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) ~ "Ratio"
+      ),
+      
+      best_method_accuracy = 1 - (pmin(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) / abs_diff_observed),
+      
+      moved_toward_expected_multiplicative = abs_diff_multiplicative < abs_diff_observed,
+      moved_toward_expected_additive = abs_diff_additive < abs_diff_observed,
+      moved_toward_expected_ratio = abs_diff_ratio < abs_diff_observed
+    )
+  
+  return(correction_summary)
+}
+
+
+
+# Updated method ranking function
+create_method_ranking <- function(correction_summary, taxon_assign_col) {
+  method_ranking <- correction_summary %>%
+    select(Species, !!sym(taxon_assign_col), best_method, best_method_accuracy, 
+           abs_diff_observed, abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio,
+           moved_toward_expected_multiplicative, moved_toward_expected_additive, 
+           moved_toward_expected_ratio, correction_level) %>%
+    arrange(desc(best_method_accuracy))
+  
+  return(method_ranking)
+}
+
+# Updated overall performance function
+create_overall_performance <- function(correction_summary) {
+  overall_performance <- correction_summary %>%
+    group_by(correction_level) %>%
+    summarise(
+      multiplicative_wins = sum(best_method == "Multiplicative"),
+      additive_wins = sum(best_method == "Additive"),
+      ratio_wins = sum(best_method == "Ratio"),
+      multiplicative_improves = sum(moved_toward_expected_multiplicative),
+      additive_improves = sum(moved_toward_expected_additive),
+      ratio_improves = sum(moved_toward_expected_ratio),
+      avg_improvement_multiplicative = mean(improvement_multiplicative, na.rm = TRUE),
+      avg_improvement_additive = mean(improvement_additive, na.rm = TRUE),
+      avg_improvement_ratio = mean(improvement_ratio, na.rm = TRUE),
+      overall_best_method = case_when(
+        multiplicative_wins > additive_wins & multiplicative_wins > ratio_wins ~ "Multiplicative",
+        additive_wins > multiplicative_wins & additive_wins > ratio_wins ~ "Additive",
+        ratio_wins > multiplicative_wins & ratio_wins > additive_wins ~ "Ratio",
+        TRUE ~ "Tie"
+      ),
+      .groups = "drop"
+    )
+  
+  return(overall_performance)
+}
+
+```
+
+Now run the comparison function on the data
+```{r}
+# Usage for 18S
+comparison_data_species_18S <- create_comparison_data(
+  corrected_species_level_18S, 
+  "species", 
+  "P18S_taxon_assign",
+  TM_asv_meta18s  # 18S metadata
+)
+
+comparison_data_taxon_18S <- create_comparison_data(
+  corrected_taxon_level_18S, 
+  "taxon", 
+  "P18S_taxon_assign",
+  TM_asv_meta18s
+)
+
+# Usage for MF
+comparison_data_species_MF <- create_comparison_data(
+  corrected_species_level_MF, 
+  "species", 
+  "MiFish_taxon_assign",
+  TM_asv_meta_mf  # MF metadata - replace with your actual MF metadata
+)
+
+comparison_data_taxon_MF <- create_comparison_data(
+  corrected_taxon_level_MF, 
+  "taxon", 
+  "MiFish_taxon_assign",
+  TM_asv_meta_mf
+)
+
+# Usage
+correction_summary_species_18S <- create_correction_summary(
+  comparison_data_species_18S, 
+  "P18S_taxon_assign"
+)
+
+correction_summary_taxon_18S <- create_correction_summary(
+  comparison_data_taxon_18S, 
+  "P18S_taxon_assign"
+)
+
+correction_summary_species_MF <- create_correction_summary(
+  comparison_data_species_MF, 
+  "MiFish_taxon_assign"
+)
+
+correction_summary_taxon_MF <- create_correction_summary(
+  comparison_data_taxon_MF, 
+  "MiFish_taxon_assign"
+)
+
+# 5. Create method rankings for both markers
+method_ranking_species_18S <- create_method_ranking(
+  correction_summary_species_18S, 
+  "P18S_taxon_assign"
+)
+
+method_ranking_taxon_18S <- create_method_ranking(
+  correction_summary_taxon_18S, 
+  "P18S_taxon_assign"
+)
+
+method_ranking_species_MF <- create_method_ranking(
+  correction_summary_species_MF, 
+  "MiFish_taxon_assign"
+)
+
+method_ranking_taxon_MF <- create_method_ranking(
+  correction_summary_taxon_MF, 
+  "MiFish_taxon_assign"
+)
+
+# 6. Create overall performance summaries for both markers
+overall_performance_species_18S <- create_overall_performance(correction_summary_species_18S)
+overall_performance_taxon_18S <- create_overall_performance(correction_summary_taxon_18S)
+overall_performance_species_MF <- create_overall_performance(correction_summary_species_MF)
+overall_performance_taxon_MF <- create_overall_performance(correction_summary_taxon_MF)
+
+# Combine overall performance
+overall_performance_combined_18S <- bind_rows(overall_performance_species_18S, overall_performance_taxon_18S)
+
+# Combine overall performance
+overall_performance_combined_MF <- bind_rows(overall_performance_species_MF, overall_performance_taxon_MF)
+
+
+print("18S Overall Method Performance:")
+print(overall_performance_combined_18S)
+
+print("MF Overall Method Performance:")
+print(overall_performance_combined_MF)
+
+
+```
+
+```{r}
+# Simplified plotting function where you specify the grouping column
+plot_method_comparison <- function(correction_summary, marker_name, group_col) {
+  # Prepare data for plotting
+  plot_data <- correction_summary %>%
+    select(all_of(group_col), abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) %>%
+    pivot_longer(
+      cols = c(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio),
+      names_to = "method",
+      values_to = "abs_diff"
+    ) %>%
+    mutate(
+      method = case_when(
+        method == "abs_diff_multiplicative" ~ "Multiplicative",
+        method == "abs_diff_additive" ~ "Additive",
+        method == "abs_diff_ratio" ~ "Ratio"
+      )
+    )
+  
+  # Create plot
+  p <- ggplot(plot_data, aes(x = .data[[group_col]], y = abs_diff, fill = method)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top"
+    ) +
+    labs(
+      title = paste("Method Performance Comparison -", marker_name),
+      subtitle = "Absolute difference from expected proportion (lower is better)",
+      y = "Absolute Difference from Expected",
+      x = group_col,  # Use the column name as x-axis label
+      fill = "Correction Method"
+    ) +
+    scale_fill_manual(values = c(
+      "Multiplicative" = "#2ca02c", 
+      "Additive" = "#d62728",
+      "Ratio" = "#9467bd"
+    ))
+  
+  return(p)
+}
+
+# Now you can call it like this:
+P18S_plot_species <- plot_method_comparison(correction_summary_species_18S, "18S", "Species")
+P18S_plot_taxon <- plot_method_comparison(correction_summary_taxon_18S, "18S", "P18S_taxon_assign")  # Use actual taxon column name
+MF_plot_species <- plot_method_comparison(correction_summary_species_MF, "MiFish", "Species")
+MF_plot_taxon <- plot_method_comparison(correction_summary_taxon_MF, "MiFish", "MiFish_taxon_assign")    # Use actual taxon column name
+
+# Save plots (your existing code)
+ggsave(plot = P18S_plot_species, 
+       here("Figures", "Prey18S_TM_correction_method_plot_species.png"), 
+       units = "cm", width = 16, height = 14, dpi = 700)
+
+ggsave(plot = P18S_plot_taxon, 
+       here("Figures", "Prey18S_TM_correction_method_plot_taxon.png"), 
+       units = "cm", width = 16, height = 14, dpi = 700)
+
+ggsave(plot = MF_plot_species, 
+       here("Figures", "PreyMF_TM_correction_method_plot_species.png"), 
+       units = "cm", width = 20, height = 14, dpi = 700)
+
+ggsave(plot = MF_plot_taxon, 
+       here("Figures", "PreyMF_TM_correction_method_plot_taxon.png"), 
+       units = "cm", width = 20, height = 14, dpi = 700)
+
+# 8. Export results for both markers
+# 18S exports
+write_csv(correction_data_combined_18S, here("intermediate-files", "CorrectionBiasRun", "Prey18S", "TM_combined_correction_factors.csv"))
+write_csv(correction_summary_species_18S, here("intermediate-files", "CorrectionBiasRun", "Prey18S", "TM_correction_method_comparison_summary_species.csv"))
+write_csv(correction_summary_taxon_18S, here("intermediate-files", "CorrectionBiasRun", "Prey18S", "TM_correction_method_comparison_summary_taxon.csv"))
+write_csv(method_ranking_species_18S, here("intermediate-files", "CorrectionBiasRun", "Prey18S", "TM_method_performance_ranking_species.csv"))
+write_csv(method_ranking_taxon_18S, here("intermediate-files", "CorrectionBiasRun", "Prey18S", "TM_method_performance_ranking_taxon.csv"))
+write_csv(overall_performance_species_18S, here("intermediate-files", "CorrectionBiasRun", "Prey18S", "TM_overall_method_performance_species.csv"))
+write_csv(overall_performance_taxon_18S, here("intermediate-files", "CorrectionBiasRun", "Prey18S", "TM_overall_method_performance_taxon.csv"))
+
+# MF exports
+write_csv(correction_data_combined_MF, here("intermediate-files", "CorrectionBiasRun", "MiFish", "TM_combined_correction_factors.csv"))
+write_csv(correction_summary_species_MF, here("intermediate-files", "CorrectionBiasRun", "MiFish", "TM_correction_method_comparison_summary_species.csv"))
+write_csv(correction_summary_taxon_MF, here("intermediate-files", "CorrectionBiasRun", "MiFish", "TM_correction_method_comparison_summary_taxon.csv"))
+write_csv(method_ranking_species_MF, here("intermediate-files", "CorrectionBiasRun", "MiFish", "TM_method_performance_ranking_species.csv"))
+write_csv(method_ranking_taxon_MF, here("intermediate-files", "CorrectionBiasRun", "MiFish", "TM_method_performance_ranking_taxon.csv"))
+write_csv(overall_performance_species_MF, here("intermediate-files", "CorrectionBiasRun", "MiFish", "TM_overall_method_performance_species.csv"))
+write_csv(overall_performance_taxon_MF, here("intermediate-files", "CorrectionBiasRun", "MiFish", "TM_overall_method_performance_taxon.csv"))
+
+print("Complete analysis pipeline finished for both 18S and MF markers!")
+```
+
+
+plot the expected, uncorrected and corrected props of species in a plot
+```{r}
+plot_proportions_comparison <- function(data, marker_name = "Marker") {
+  # Load required libraries
+  if (!require(ggplot2)) install.packages("ggplot2"); library(ggplot2)
+  if (!require(dplyr)) install.packages("dplyr"); library(dplyr)
+  if (!require(tidyr)) install.packages("tidyr"); library(tidyr)
+  
+  # Check if Species column exists and has data
+  if (!"Species" %in% colnames(data) || all(is.na(data$Species))) {
+    stop("Species column is missing or contains only NA values")
+  }
+  
+  # Get all unique species
+  all_species <- unique(data$Species)
+  
+  # Separate reference and target species
+  reference_species <- "Clupea pallasii"
+  target_species <- setdiff(all_species, reference_species)
+  
+  # Order target species alphabetically
+  target_species_ordered <- rev(sort(target_species))
+  
+  # Create the ordered factor levels
+  species_levels <- c(target_species_ordered, reference_species)
+  
+  # Apply the factor levels to the data
+  data <- data %>%
+    mutate(
+      Species_group = ifelse(Species == reference_species, "Reference", "Target"),
+      Species = factor(Species, levels = species_levels)
+    )
+  
+  # Prepare the data for plotting - convert to long format
+  plot_data <- data %>%
+    select(Species, Species_group, actual_prop, observed_prop, corrected_prop_ratio, ratio_m_estimator) %>%
+    pivot_longer(cols = c(actual_prop, observed_prop, corrected_prop_ratio),
+                 names_to = "prop_type", 
+                 values_to = "proportion") %>%
+    mutate(prop_type = factor(prop_type,
+                              levels = c("actual_prop", "observed_prop", "corrected_prop_ratio"),
+                              labels = c("Expected", "Uncorrected", "Corrected")))
+  
+  # Calculate mean proportions for each species and proportion type
+  mean_data <- plot_data %>%
+    group_by(Species, Species_group, prop_type) %>%
+    summarise(mean_proportion = mean(proportion, na.rm = TRUE),
+              ratio_m_estimator = first(ratio_m_estimator),
+              .groups = "drop")
+  
+  # Get unique ratio_m_estimator values for each species and create appropriate labels
+  species_ratios <- data %>%
+    group_by(Species, Species_group) %>%
+    summarise(ratio_m_estimator = first(ratio_m_estimator), .groups = "drop") %>%
+    mutate(
+      # Create label: "Reference" for reference species, "cf = value" for others
+      right_label = ifelse(Species_group == "Reference", 
+                          "Reference", 
+                          sprintf("cf = %.2f", ratio_m_estimator))
+    )
+  
+  # Create the plot with expanded x-axis limits
+  p <- ggplot(plot_data, aes(x = proportion, y = Species)) +
+    # Add vertical line at 0.5
+    geom_vline(xintercept = 0.5, linetype = "dashed", color = "gray50", alpha = 0.7) +
+    
+    # Add horizontal line to separate reference species
+    geom_hline(yintercept = length(unique(plot_data$Species)) - 0.5, 
+               color = "black", size = 0.5) +
+    
+    # Add individual points (unfilled circles)
+    geom_point(aes(color = prop_type), 
+               position = position_jitter(width = 0, height = 0.2),
+               alpha = 0.7, size = 2, shape = 1) +
+    
+    # Add mean points (filled circles)
+    geom_point(data = mean_data, 
+               aes(x = mean_proportion, y = Species, fill = prop_type),
+               size = 3, shape = 21, color = "black") +
+    
+    # Add species names on the left (as y-axis labels)
+    # Add correction factors on the right
+    geom_text(data = species_ratios, 
+              aes(x = 1.02, y = Species, label = right_label),
+              hjust = 0, size = 3, color = "black", fontface = "plain") +
+    
+    # Scale adjustments with expanded limits
+    scale_x_continuous(limits = c(-0.25, 1.25), 
+                       breaks = seq(0, 1, 0.1),
+                       expand = c(0, 0)) +
+    scale_color_manual(values = c("Expected" = "#1f77b4", 
+                                  "Uncorrected" = "#ff7f0e", 
+                                  "Corrected" = "#2ca02c")) +
+    scale_fill_manual(values = c("Expected" = "#1f77b4", 
+                                 "Uncorrected" = "#ff7f0e", 
+                                 "Corrected" = "#2ca02c")) +
+    
+    # Theme and labels
+    labs(title = paste("Proportion Comparison -", marker_name),
+         x = "Proportion of Reads in Tissue Mixture",
+         y = NULL,
+         color = "Proportion Type",
+         fill = "Proportion Type") +
+    theme_bw() +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      plot.title = element_text(hjust = 0.5),
+      axis.text.y = element_text(face = "italic", hjust = 1, size = 10),
+      axis.ticks.y = element_blank(),
+      plot.margin = margin(1, 1, 1, 1, "cm"),
+      panel.border = element_rect(color = "black", size = 0.5)
+    )
+  
+  return(p)
+}
+
+MFcfplot <- plot_proportions_comparison(MF_corrected_asv_data, "MiFish Marker")
+P18Scfplot <- plot_proportions_comparison(corrected_asv_data, "Prey 18S Marker")
+
+MFcfplot
+P18Scfplot
+
+ggsave(plot=MFcfplot, here("Figures","MiFish_TM_prop_comparison_plot.png"), units = "cm", width = 22, height = 30, dpi=700)
+ggsave(plot=P18Scfplot, here("Figures","Prey18S_TM_prop_comparison_plot.png"), units = "cm", width = 22, height = 20, dpi=700)
+```
+
+Okay, now that we have the correction factors for each species included in the controlled feeding study and the wild samples let's apply them to the scat data. Since these are tissue mixtures it is too many levels removed of total DNA to adequately alter the mocks in the right way. We could try it, but looking at the MiFish the direction of the amp efficiency for some species I know is different in directionality from expected so that is interesting.  
+
+
+
+apply to the controlled feeding study scats. 
+First we need to format the asv data for both marker sets
+```{r}
+#format and clean control feeding study ASVs - 18S
+asv_meta_18s %>% 
+  filter(str_detect(Plate_ID, "Prey18S")) %>% 
+  filter(region == "ControlFeeding") -> CF_asv_meta18s
+
+# First, get the sample IDs you want to keep from the metadata
+samples_to_keep <- CF_asv_meta18s$sampleid
+
+# Find which samples_to_keep actually exist in asv_data
+existing_samples <- intersect(samples_to_keep, names(asv_data_18s))
+
+# Convert the ASV table to long format and filter for desired samples
+CF_asv_data18s <- asv_data_18s %>%
+  # Keep the taxonomy column
+  select(final_taxonomy, all_of(existing_samples)) %>%
+  # Convert to long format
+  pivot_longer(
+    cols = -final_taxonomy,
+    names_to = "sampleid",
+    values_to = "count"
+  ) %>%
+  # Filter to only include samples in your metadata
+  filter(sampleid %in% existing_samples)
+
+# The result is a long-format dataframe with taxonomy, sampleid, and count columns
+head(CF_asv_data18s)
+
+CF_asv_data_18s <- CF_asv_data18s %>%
+  left_join(CF_asv_meta18s, by = "sampleid") %>% 
+  select(final_taxonomy,sampleid,count,samplename)
+
+##### format and clean control feeding study ASVs - MiFish
+
+asv_meta_mf %>% 
+  filter(str_detect(Plate_ID, "MiFish")) %>% 
+  filter(region == "ControlFeeding") -> CF_asv_meta_mf
+
+# First, get the sample IDs you want to keep from the metadata
+samples_to_keep <- CF_asv_meta_mf$sampleid
+
+# Find which samples_to_keep actually exist in asv_data
+existing_samples <- intersect(samples_to_keep, names(asv_data_mf))
+
+# Convert the ASV table to long format and filter for desired samples
+CF_asv_datamf <- asv_data_mf %>%
+  # Keep the taxonomy column
+  select(final_taxonomy, all_of(existing_samples)) %>%
+  # Convert to long format
+  pivot_longer(
+    cols = -final_taxonomy,
+    names_to = "sampleid",
+    values_to = "count"
+  ) %>%
+  # Filter to only include samples in your metadata
+  filter(sampleid %in% existing_samples)
+
+# The result is a long-format dataframe with taxonomy, sampleid, and count columns
+head(CF_asv_datamf)
+
+CF_asv_data_mf <- CF_asv_datamf %>%
+  left_join(CF_asv_meta_mf, by = "sampleid") %>% 
+  select(final_taxonomy,sampleid,count,samplename)  
+
+```
+
+Prep the asv data for the controlled feeding study samples
+```{r}
+#parse species name from final taxonomy
+CF_asv_data_18s %>% 
+  mutate(species = map_chr(final_taxonomy, extract_final_taxon),
+         P18S_taxon_assign = str_trim(species)) %>% 
+  select(-species)-> CF_asv_data_18s
+
+CF_asv_data_mf %>% 
+  mutate(species = map_chr(final_taxonomy, extract_final_taxon),
+         species = str_trim(species)) -> CF_asv_data_mf
+
+```
+
+
+Now we need to apply the correction factors to the species included in the actual data. 
+1. Pull out species included in tissue correction
+2. calc prop of reads for each without non-target species involved
+3. correct diet proportions based on tissue correction factors
+
+Function to prepare the asv data from wild and controlled feeding study scats
+```{r}
+# Simplified preparation for real-world data
+prepare_asv_data <- function(asv_data, correction_df, taxon_assign_col = "P18S_taxon_assign") {
+  
+  # Remove zero counts
+  asv_data <- asv_data %>% filter(count > 0)
+  
+  # Get taxa that exist in correction data
+  taxa_in_correction <- unique(correction_df[[taxon_assign_col]])
+  
+  # Filter to only include taxa with correction factors
+  filtered_data <- asv_data %>%
+    filter(!!sym(taxon_assign_col) %in% taxa_in_correction)
+  
+  # Check if we have any data left
+  if (nrow(filtered_data) == 0) {
+    warning("No matching taxa found between ASV data and correction data!")
+    return(NULL)
+  }
+  
+  # Calculate total_count and observed_prop AFTER filtering
+  prepared_data <- filtered_data %>%
+    group_by(sampleid) %>%
+    mutate(
+      total_count = sum(count),
+      observed_prop = count / total_count
+    ) %>%
+    ungroup()
+  
+  return(prepared_data)
+}
+
+# Real-world correction function
+apply_correction_realworld <- function(asv_data, correction_df, taxon_assign_col, 
+                                      correction_level = "taxon",
+                                      reference_taxon = "Clupea pallasii") {
+  
+  # Calculate observed_prop if needed
+  if (!"observed_prop" %in% names(asv_data)) {
+    asv_data <- asv_data %>%
+      group_by(sampleid) %>%
+      mutate(observed_prop = count / sum(count)) %>%
+      ungroup()
+  }
+  
+  # Filter correction data for the appropriate level
+  if (correction_level == "species") {
+    correction_df_level <- correction_df %>%
+      filter(correction_level == "species" | correction_level == "reference")
+  } else {
+    correction_df_level <- correction_df %>%
+      filter(correction_level == "taxon" | correction_level == "reference")
+  }
+  
+  # Join using ONLY the taxon assignment column
+  corrected_asv_data <- asv_data %>%
+    left_join(correction_df_level, by = taxon_assign_col) %>%
+    group_by(sampleid) %>%
+    mutate(
+      # Use taxon assignment for comparison instead of Species
+      corrected_prop_multiplicative = ifelse(
+        !!sym(taxon_assign_col) != reference_taxon & !is.na(multiplicative_m_estimator),
+        observed_prop * multiplicative_m_estimator,
+        observed_prop
+      ),
+      
+      corrected_prop_additive = ifelse(
+        !!sym(taxon_assign_col) != reference_taxon & !is.na(additive_m_estimator),
+        observed_prop + additive_m_estimator,
+        observed_prop
+      ),
+      
+      corrected_prop_ratio = ifelse(
+        !!sym(taxon_assign_col) != reference_taxon & !is.na(ratio_m_estimator),
+        observed_prop * ratio_m_estimator,
+        observed_prop
+      )
+    ) %>%
+    # Renormalize and calculate counts
+    mutate(
+      total_prop_multiplicative = sum(corrected_prop_multiplicative, na.rm = TRUE),
+      corrected_prop_multiplicative = corrected_prop_multiplicative / total_prop_multiplicative,
+      total_prop_additive = sum(corrected_prop_additive, na.rm = TRUE),
+      corrected_prop_additive = corrected_prop_additive / total_prop_additive,
+      total_prop_ratio = sum(corrected_prop_ratio, na.rm = TRUE),
+      corrected_prop_ratio = corrected_prop_ratio / total_prop_ratio
+    ) %>%
+    mutate(
+      corrected_count_multiplicative = round(corrected_prop_multiplicative * first(total_count)),
+      corrected_count_additive = round(corrected_prop_additive * first(total_count)),
+      corrected_count_ratio = round(corrected_prop_ratio * first(total_count))
+    ) %>%
+    ungroup() %>%
+    select(-starts_with("total_prop_")) %>%
+    mutate(correction_level_applied = correction_level)
+  
+  return(corrected_asv_data)
+}
+```
+
+Do the 18S first for the controlled feeding study data
+
+```{r}
+#the polychaete worm correction factor is messing things up before we apply the corrections remove it
+correction_data_combined_18S <- correction_data_combined_18S %>% 
+  filter(!str_detect(P18S_taxon_assign, "Nereididae"))
+
+# Your data already has P18S_taxon_assign, so just prepare it
+CF_asv_data_18s_prepared <- prepare_asv_data(
+  asv_data = CF_asv_data_18s,  # Your data that already has P18S_taxon_assign
+  correction_df = correction_data_combined_18S,
+  taxon_assign_col = "P18S_taxon_assign"
+)
+
+# Apply the correction
+corrected_CF_18S_taxon <- apply_correction_realworld(
+  asv_data = CF_asv_data_18s_prepared,
+  correction_df = correction_data_combined_18S,
+  taxon_assign_col = "P18S_taxon_assign",
+  correction_level = "taxon",
+  reference_taxon = "Actinopteri"
+  ) %>% 
+  select(-Species)
+  
+write.csv(corrected_CF_18S_taxon, here("intermediate-files","CorrectionBiasRun","Prey18S","Prey18S_TM_corrected_asv_data.csv"), row.names = F)
+
+```
+
+
+now mifish
+```{r}
+# Your data already has P18S_taxon_assign, so just prepare it
+CF_asv_data_MF_prepared <- prepare_asv_data(
+  asv_data = CF_asv_data_mf,  # Your data that already has P18S_taxon_assign
+  correction_df = correction_data_combined_MF,
+  taxon_assign_col = "MiFish_taxon_assign"
+)
+
+# Apply the correction
+corrected_CF_MF_taxon <- apply_correction_realworld(
+  asv_data = CF_asv_data_MF_prepared,
+  correction_df = correction_data_combined_MF,
+  taxon_assign_col = "MiFish_taxon_assign",
+  correction_level = "taxon",
+  reference_taxon = "Clupea pallasii"
+  ) %>% 
+  select(-Species)
+  
+write.csv(corrected_CF_MF_taxon, here("intermediate-files","CorrectionBiasRun","MiFish","MiFish_TM_corrected_asv_data.csv"), row.names = F)
+```
+
+Now the wild samples
+```{r}
+#format and clean control feeding study ASVs - 18S
+wild_asv_meta <- wild_md3 %>% 
+  select(-samplename) %>% 
+  dplyr::rename(samplename = Sample_ID)
+
+# First, get the sample IDs you want to keep from the metadata
+samples_to_keep <- wild_asv_meta$sampleid
+
+# Find which samples_to_keep actually exist in asv_data
+existing_samples <- intersect(samples_to_keep, names(asv_wild_data_18s))
+
+# Convert the ASV table to long format and filter for desired samples
+wild_asv_data18s <- asv_wild_data_18s %>%
+  # Keep the taxonomy column
+  select(final_taxonomy, all_of(existing_samples)) %>%
+  # Convert to long format
+  pivot_longer(
+    cols = -final_taxonomy,
+    names_to = "sampleid",
+    values_to = "count"
+  ) %>%
+  # Filter to only include samples in your metadata
+  filter(sampleid %in% existing_samples)
+
+# The result is a long-format dataframe with taxonomy, sampleid, and count columns
+head(wild_asv_data18s)
+
+wild_asv_data_18s <- wild_asv_data18s %>%
+  left_join(wild_asv_meta, by = "sampleid") %>% 
+  select(final_taxonomy,sampleid,count,samplename,Collection_Location,day,month,year)
+
+##### format and clean control feeding study ASVs - MiFish
+
+# Convert the ASV table to long format and filter for desired samples
+wild_asv_datamf <- asv_wild_data_mf %>%
+  # Keep the taxonomy column
+  select(final_taxonomy, all_of(existing_samples)) %>%
+  # Convert to long format
+  pivot_longer(
+    cols = -final_taxonomy,
+    names_to = "sampleid",
+    values_to = "count"
+  ) %>%
+  # Filter to only include samples in your metadata
+  filter(sampleid %in% existing_samples)
+
+# The result is a long-format dataframe with taxonomy, sampleid, and count columns
+head(wild_asv_datamf)
+
+wild_asv_data_mf <- wild_asv_datamf %>%
+  left_join(wild_asv_meta, by = "sampleid") %>% 
+  select(final_taxonomy,sampleid,count,samplename,Collection_Location,day,month,year)  
+
+```
+
+Prep the asv data for the controlled feeding study samples
+```{r}
+#parse species name from final taxonomy
+wild_asv_data_18s %>% 
+  mutate(species = map_chr(final_taxonomy, extract_final_taxon),
+         P18S_taxon_assign = str_trim(species)) %>% 
+  select(-species)-> wild_asv_data_18s
+
+wild_asv_data_mf %>% 
+  mutate(species = map_chr(final_taxonomy, extract_final_taxon),
+         species = str_trim(species)) -> wild_asv_data_mf
+
+```
+
+apply correction to the species present in the wild samples
 ```{r}
 
+# Your data already has P18S_taxon_assign, so just prepare it
+wild_asv_data_18s_prepared <- prepare_asv_data(
+  asv_data = wild_asv_data_18s,  # Your data that already has P18S_taxon_assign
+  correction_df = correction_data_combined_18S,
+  taxon_assign_col = "P18S_taxon_assign"
+)
+
+# Apply the correction
+corrected_wild_18S_taxon <- apply_correction_realworld(
+  asv_data = wild_asv_data_18s_prepared,
+  correction_df = correction_data_combined_18S,
+  taxon_assign_col = "P18S_taxon_assign",
+  correction_level = "taxon",
+  reference_taxon = "Actinopteri"
+  ) %>% 
+  select(-Species)
+  
+write.csv(corrected_wild_18S_taxon, here("intermediate-files","Wild_CB_Samples","Prey18S_TM_corrected_CB2_asv_data.csv"), row.names = F)
+
+# Your data already has P18S_taxon_assign, so just prepare it
+wild_asv_data_MF_prepared <- prepare_asv_data(
+  asv_data = wild_asv_data_mf,  # Your data that already has P18S_taxon_assign
+  correction_df = correction_data_combined_MF,
+  taxon_assign_col = "MiFish_taxon_assign"
+)
+
+# Apply the correction
+corrected_wild_MF_taxon <- apply_correction_realworld(
+  asv_data = wild_asv_data_MF_prepared,
+  correction_df = correction_data_combined_MF,
+  taxon_assign_col = "MiFish_taxon_assign",
+  correction_level = "taxon",
+  reference_taxon = "Clupea pallasii"
+  ) %>% 
+  select(-Species)
+  
+write.csv(corrected_wild_MF_taxon, here("intermediate-files","Wild_CB_Samples","MiFish_TM_corrected_CB2_asv_data.csv"), row.names = F)
 ```
 
-Recalc uncorrected proportion of reads to both herring and target species
-```{r}
-
-```
-
-bring in the expected proportions from the metadata and species map
-```{r}
-
-```
-
-calc difference in uncorrected and expected to determine correction factors
-```{r}
-
-```
-
-apply correction factors back to tissue mixture replicates
-```{r}
-
-```
-
-apply to the mock community as well
-```{r}
-
-```
-
-apply to the controlled feeding study scats
-```{r}
-
-```
-
+Okay now take those corrected dataframes for each set of samples and the markers into the next script for digestion bias.

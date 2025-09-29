@@ -11,8 +11,1586 @@ knitr::opts_chunk$set(echo = TRUE)
 
 This script analyzes the error due to digestion bias in the controlled feeding study after correcting reads for the amplification bias and the tissue bias. 
 
+```{r}
+library(here)
+library(tidyverse)
+```
+
 This script does the following:
 1. identifies the remaining bias in the controlled feeding study
 2. determines corrections for the different groups of prey
 3. applies the corrections to the controlled feeding results to confirm usage
 4. applies the corrections to the wild scats to return a final fully corrected table of corrected reads
+
+```{r}
+expected_prop_mapCtrF <- read.csv(here("input-files","PvCF_master_diet_sample_metadata.csv"), header = T, check.names = F)
+
+```
+
+
+```{r}
+#get expected_prop data prepped
+expected_prop_mapCF_18S <- expected_prop_mapCtrF %>% 
+  rename("P18S_taxon_assign" = "18S_taxon_assign") %>%
+  dplyr::select(samplename, SampleID, seal_id, station, biol, tech, diet_sp,
+         Species, P18S_taxon_assign, actual_prop, actual_mass, total_mass) %>% 
+  distinct(samplename, SampleID, seal_id, station, biol, tech, diet_sp,
+         Species, P18S_taxon_assign, actual_prop, actual_mass, total_mass) %>% 
+  filter(!is.na(actual_prop))
+
+#get expected_prop data prepped
+expected_prop_mapCF_MF <- expected_prop_mapCtrF %>% 
+  dplyr::select(samplename, SampleID, seal_id, station, biol, tech, diet_sp,
+         Species, MiFish_taxon_assign, actual_prop, actual_mass, total_mass) %>% 
+  distinct(samplename, SampleID, seal_id, station, biol, tech, diet_sp,
+         Species, MiFish_taxon_assign, actual_prop, actual_mass, total_mass) %>% 
+  filter(!is.na(actual_prop))
+
+# Collapse the expected proportions by samplename, seal_id, and taxon assignment
+expected_prop_18S_collapsed <- expected_prop_mapCF_18S %>%
+  group_by(samplename, SampleID, seal_id, station, biol, tech, P18S_taxon_assign, total_mass) %>%
+  summarize(
+    actual_prop = sum(actual_prop, na.rm = TRUE),
+    actual_mass = sum(actual_mass, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Verify the collapse worked
+expected_prop_18S_collapsed %>%
+  count(samplename, seal_id, P18S_taxon_assign) %>%
+  filter(n > 1)  # Should be 0 rows if collapse worked properly
+
+# First, remove rows with NA in MiFish_taxon_assign and calculate fish proportions
+expected_prop_MiFish_formatted <- expected_prop_mapCF_MF %>%
+  filter(!is.na(MiFish_taxon_assign)) %>%
+  group_by(samplename, SampleID, seal_id, station, biol, tech, total_mass) %>%
+  mutate(
+    fish_mass = sum(actual_mass, na.rm = TRUE),  # Total fish mass per sample-seal
+    fish_prop = actual_mass / fish_mass          # Proportion of each fish species
+  ) %>%
+  ungroup()
+
+
+# Check that fish proportions sum to 1 for each sample-seal combination
+prop_check <- expected_prop_MiFish_formatted %>%
+  group_by(samplename, seal_id) %>%
+  summarize(
+    total_fish_prop = sum(fish_prop, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+print(prop_check)
+
+```
+
+Load in the dataframes that have been corrected using the tissue mixture correction factors
+
+```{r}
+CF_18S_data <- read.csv(here("intermediate-files","CorrectionBiasRun","Prey18S","Prey18S_TM_corrected_asv_data.csv"), header = T)
+CF_MF_data <- read.csv(here("intermediate-files","CorrectionBiasRun","MiFish","MiFish_TM_corrected_asv_data.csv"), header = T)
+
+wild_18S_data <- read.csv(here("intermediate-files","Wild_CB_Samples","Prey18S_TM_corrected_CB2_asv_data.csv"), header = T)
+wild_MF_data <- read.csv(here("intermediate-files","Wild_CB_Samples","MiFish_TM_corrected_CB2_asv_data.csv"), header = T)
+```
+
+okay now we need to join the expected proportions of diet with the controlled feeding study data. We have often two seal options per scat, and we want to make sure both get data so the join should end up with the data duplicated in both seals that may have created the scat so we can represent the data properly
+
+```{r}
+library(tidyverse)
+
+# Join the dataframes
+CF_18S_data_expected <- CF_18S_data %>%
+  left_join(expected_prop_18S_collapsed, 
+            by = c("samplename", "P18S_taxon_assign"))
+
+# Verify we have the expected duplication for multiple seal options
+seal_options_check <- CF_18S_data_expected %>%
+  group_by(samplename) %>%
+  summarize(
+    n_seals = n_distinct(seal_id, na.rm = TRUE),
+    n_taxa = n_distinct(P18S_taxon_assign, na.rm = TRUE)
+  )
+
+print(seal_options_check)
+
+# For MiFish data
+
+# If multiple fish species map to the same MiFish taxon assignment
+expected_prop_MiFish_collapsed <- expected_prop_MiFish_formatted %>%
+  mutate(prey_common = case_when(
+    str_detect(Species, "Mallotus|Thaleichthys") ~ "capelin",
+    str_detect(Species, "Oncorhynchus") ~ "salmon",
+    str_detect(Species, "Merluccius") ~ "hake",
+    str_detect(Species, "Clupea") ~ "herring",
+    str_detect(Species, "Gadus") ~ "cod",
+    TRUE ~ as.character(Species)
+  )) %>% 
+  group_by(samplename, SampleID, seal_id, station, biol, tech, prey_common,total_mass, fish_mass) %>%
+  summarize(
+    fish_prop = sum(fish_prop, na.rm = TRUE),
+    actual_mass = sum(actual_mass, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+
+# Now join with your MiFish observed data
+CF_MF_data_expected <- CF_MF_data %>%
+  mutate(prey_common = case_when(
+    str_detect(species, "Mallotus|Thaleichthys") ~ "capelin",
+    str_detect(species, "Oncorhynchus") ~ "salmon",
+    str_detect(species, "Merluccius") ~ "hake",
+    str_detect(species, "Clupea") ~ "herring",
+    str_detect(species, "Gadus") ~ "cod",
+    TRUE ~ as.character(species)
+  )) %>% 
+  left_join(expected_prop_MiFish_collapsed, 
+            by = c("samplename", "prey_common"))
+
+```
+Prep for the correction factor calculation
+```{r}
+CF_MF_data_expected %>% 
+  rename(diet = station) -> CF_MF_data_joined
+
+CF_18S_data_expected %>% 
+  filter(!is.na(actual_prop)) %>% 
+  rename(diet = station) -> CF_18S_data_expected
+```
+
+```{r}
+library(tidyverse)
+library(lme4)
+library(boot)
+
+# Core function 1: Calculate correction factors
+calculate_correction_factors <- function(observed_prop, expected_prop) {
+  # Avoid division by zero and boundary issues
+  observed_prop_adj <- ifelse(observed_prop == 0, 0.001, 
+                             ifelse(observed_prop == 1, 0.999, observed_prop))
+  expected_prop_adj <- ifelse(expected_prop == 0, 0.001, 
+                             ifelse(expected_prop == 1, 0.999, expected_prop))
+  
+  data.frame(
+    multiplicative_cf = expected_prop_adj / observed_prop_adj,
+    additive_cf = expected_prop_adj - observed_prop_adj,
+    ratio_cf = (expected_prop_adj * (1 - observed_prop_adj)) / 
+               (observed_prop_adj * (1 - expected_prop_adj))
+  )
+}
+
+# Core function 2: M-estimator (robust mean)
+m_estimator <- function(x, k = 1.28) {
+  mu <- median(x)
+  mad <- mad(x)
+  
+  for(i in 1:20) {
+    residuals <- x - mu
+    weights <- ifelse(abs(residuals) <= k * mad, 1, (k * mad) / abs(residuals))
+    mu_new <- sum(weights * x) / sum(weights)
+    if(abs(mu_new - mu) < 1e-6) break
+    mu <- mu_new
+  }
+  return(mu)
+}
+
+# Main workflow function
+compute_digestion_correction_factors <- function(joined_data, marker_name) {
+  
+  # Step 1: Calculate CFs for each observation
+  cat("Step 1: Calculating correction factors for", marker_name, "...\n")
+  joined_data_with_cfs <- joined_data %>%
+    rowwise() %>%
+    mutate(
+      cf_data = list(calculate_correction_factors(observed_prop, fish_prop))
+    ) %>%
+    unnest_wider(cf_data) %>%
+    mutate(
+      log_multiplicative_cf = log(multiplicative_cf),
+      log_ratio_cf = log(ratio_cf)
+    )
+  
+  # Step 2: Aggregate technical replicates
+  cat("Step 2: Aggregating technical replicates for", marker_name, "...\n")
+  bio_aggregated <- joined_data_with_cfs %>%
+    group_by(sampleid, seal_id, prey_common, diet, biol) %>%
+    summarize(
+      observed_prop_mean = mean(observed_prop, na.rm = TRUE),
+      multiplicative_cf_mean = mean(multiplicative_cf, na.rm = TRUE),
+      additive_cf_mean = mean(additive_cf, na.rm = TRUE),
+      ratio_cf_mean = mean(ratio_cf, na.rm = TRUE),
+      fish_prop = first(fish_prop),
+      n_tech_reps = n(),
+      .groups = 'drop'
+    ) %>%
+    mutate(log_multiplicative_cf = log(multiplicative_cf_mean))
+  
+  # Step 3: Calculate diet-level CFs
+  cat("Step 3: Calculating diet-level CFs for", marker_name, "...\n")
+  diet_level_cfs <- bio_aggregated %>%
+    group_by(diet, prey_common) %>%
+    summarize(
+      # Multiplicative CF stats
+      mean_multiplicative = mean(multiplicative_cf_mean, na.rm = TRUE),
+      sd_multiplicative = sd(multiplicative_cf_mean, na.rm = TRUE),
+      robust_multiplicative = m_estimator(multiplicative_cf_mean),
+      
+      # Additive CF stats
+      mean_additive = mean(additive_cf_mean, na.rm = TRUE),
+      sd_additive = sd(additive_cf_mean, na.rm = TRUE),
+      robust_additive = m_estimator(additive_cf_mean),
+      
+      # Ratio CF stats
+      mean_ratio = mean(ratio_cf_mean, na.rm = TRUE),
+      sd_ratio = sd(ratio_cf_mean, na.rm = TRUE),
+      robust_ratio = m_estimator(ratio_cf_mean),
+      
+      # Sample sizes
+      n_seals = n_distinct(seal_id),
+      n_biol_reps = n(),
+      
+      .groups = 'drop'
+    )
+  
+  # Step 4: Bootstrap confidence intervals for prey_common level CFs
+  cat("Step 4: Bootstrapping confidence intervals for", marker_name, "...\n")
+  bootstrap_cf_ci <- function(data, n_boot = 1000) {
+    if(nrow(data) == 0) return(NULL)
+    
+    boot_func <- function(data, indices) {
+      sample_data <- data[indices, ]
+      m_estimator(sample_data$multiplicative_cf_mean)
+    }
+    
+    boot_results <- boot(data, boot_func, R = n_boot)
+    ci <- boot.ci(boot_results, type = "bca")
+    
+    return(data.frame(
+      mean_cf = mean(data$multiplicative_cf_mean, na.rm = TRUE),
+      robust_cf = m_estimator(data$multiplicative_cf_mean),
+      ci_lower = ifelse(is.null(ci$bca[4]), NA, ci$bca[4]),
+      ci_upper = ifelse(is.null(ci$bca[5]), NA, ci$bca[5]),
+      n_obs = nrow(data)
+    ))
+  }
+  
+  prey_level_cfs <- bio_aggregated %>%
+    group_by(prey_common) %>%
+    group_modify(~ bootstrap_cf_ci(.x)) %>%
+    ungroup()
+  
+  # Step 5: Model seal variability
+  cat("Step 5: Modeling seal variability for", marker_name, "...\n")
+  model_seal_variability <- function(data) {
+    model <- lmer(log_multiplicative_cf ~ prey_common + (1 | seal_id) + (1 | diet), 
+                  data = data)
+    
+    variance_components <- as.data.frame(VarCorr(model))
+    seal_variance <- variance_components %>% 
+      filter(grp == "seal_id") %>% 
+      pull(vcov)
+    
+    return(list(
+      model = model,
+      seal_variance = seal_variance,
+      total_variance = sum(variance_components$vcov) + attr(VarCorr(model), "sc")^2
+    ))
+  }
+  
+  seal_variability <- model_seal_variability(bio_aggregated)
+  
+  # Step 6: Create final correction factor table
+  cat("Step 6: Creating final correction factors for", marker_name, "...\n")
+  final_correction_factors <- prey_level_cfs %>%
+    mutate(
+      marker = marker_name,
+      seal_variance_ratio = seal_variability$seal_variance / seal_variability$total_variance,
+      recommended_cf = robust_cf,
+      cf_type = "multiplicative"
+    ) %>%
+    select(marker, prey_common, recommended_cf, ci_lower, ci_upper, n_obs, seal_variance_ratio)
+  
+  # Step 7: Compare CF methods
+  cf_method_comparison <- prey_level_cfs %>%
+    left_join(
+      diet_level_cfs %>% 
+        group_by(prey_common) %>% 
+        summarize(
+          mean_additive = mean(mean_additive),
+          mean_ratio = mean(mean_ratio),
+          .groups = 'drop'
+        ),
+      by = "prey_common"
+    ) %>%
+    mutate(marker = marker_name) %>%
+    select(marker, prey_common, multiplicative = robust_cf, additive = mean_additive, ratio = mean_ratio)
+  
+  # Return all results
+  return(list(
+    bio_aggregated = bio_aggregated,
+    diet_level_cfs = diet_level_cfs,
+    prey_level_cfs = prey_level_cfs,
+    final_correction_factors = final_correction_factors,
+    cf_method_comparison = cf_method_comparison,
+    seal_variability = seal_variability
+  ))
+}
+
+# Function to run analysis for both markers and combine results
+run_complete_analysis <- function(joined_18S_data, joined_MiFish_data) {
+  
+  cat("Starting digestion bias correction factor analysis...\n")
+  cat("============================================\n")
+  
+  # Analyze 18S data
+  results_18S <- compute_digestion_correction_factors(joined_18S_data, "18S")
+  
+  cat("\n")
+  cat("============================================\n")
+  
+  # Analyze MiFish data
+  results_MiFish <- compute_digestion_correction_factors(joined_MiFish_data, "MiFish")
+  
+  # Combine final correction factors
+  combined_correction_factors <- bind_rows(
+    results_18S$final_correction_factors,
+    results_MiFish$final_correction_factors
+  )
+  
+  # Combine method comparisons
+  combined_method_comparison <- bind_rows(
+    results_18S$cf_method_comparison,
+    results_MiFish$cf_method_comparison
+  )
+  
+  # Print summary results
+  cat("\n")
+  cat("ANALYSIS COMPLETE\n")
+  cat("============================================\n")
+  cat("Final Correction Factors by Marker:\n")
+  print(combined_correction_factors)
+  
+  cat("\nMethod Comparison:\n")
+  print(combined_method_comparison)
+  
+  # Return all results
+  return(list(
+    results_18S = results_18S,
+    results_MiFish = results_MiFish,
+    combined_correction_factors = combined_correction_factors,
+    combined_method_comparison = combined_method_comparison
+  ))
+}
+
+# USAGE:
+# Assuming you have joined_18S_data and joined_MiFish_data ready
+# analysis_results <- run_complete_analysis(joined_18S_data, joined_MiFish_data)
+
+# You can also run individual markers:
+# results_18S_only <- compute_digestion_correction_factors(joined_18S_data, "18S")
+# results_MiFish_only <- compute_digestion_correction_factors(joined_MiFish_data, "MiFish")
+
+
+
+```
+
+```{r}
+# MAIN WORKFLOW:
+
+# 1. Calculate CFs for each observation in the joined data
+joined_data_with_cfs <- joined_MiFish_data %>%
+  rowwise() %>%
+  mutate(
+    cf_data = list(calculate_correction_factors(observed_prop, fish_prop))
+  ) %>%
+  unnest_wider(cf_data) %>%
+  mutate(
+    log_multiplicative_cf = log(multiplicative_cf),
+    log_ratio_cf = log(ratio_cf)
+  )
+
+# 2. Aggregate technical replicates first (average observed proportions)
+bio_aggregated <- joined_data_with_cfs %>%
+  group_by(sampleid, seal_id, prey_common, diet, biol) %>%
+  summarize(
+    observed_prop_mean = mean(observed_prop, na.rm = TRUE),
+    multiplicative_cf_mean = mean(multiplicative_cf, na.rm = TRUE),
+    additive_cf_mean = mean(additive_cf, na.rm = TRUE),
+    ratio_cf_mean = mean(ratio_cf, na.rm = TRUE),
+    fish_prop = first(fish_prop),  # Should be same within sampleid-seal_id-prey_common
+    n_tech_reps = n(),
+    .groups = 'drop'
+  )
+
+# 3. Calculate diet-level CFs
+diet_level_cfs <- bio_aggregated %>%
+  group_by(diet, prey_common) %>%
+  summarize(
+    # Multiplicative CF stats
+    mean_multiplicative = mean(multiplicative_cf_mean, na.rm = TRUE),
+    sd_multiplicative = sd(multiplicative_cf_mean, na.rm = TRUE),
+    robust_multiplicative = m_estimator(multiplicative_cf_mean),
+    
+    # Additive CF stats
+    mean_additive = mean(additive_cf_mean, na.rm = TRUE),
+    sd_additive = sd(additive_cf_mean, na.rm = TRUE),
+    robust_additive = m_estimator(additive_cf_mean),
+    
+    # Ratio CF stats
+    mean_ratio = mean(ratio_cf_mean, na.rm = TRUE),
+    sd_ratio = sd(ratio_cf_mean, na.rm = TRUE),
+    robust_ratio = m_estimator(ratio_cf_mean),
+    
+    # Sample sizes
+    n_seals = n_distinct(seal_id),
+    n_biol_reps = n(),
+    
+    .groups = 'drop'
+  )
+
+# 4. Bootstrap confidence intervals for prey_common level CFs
+bootstrap_cf_ci <- function(data, n_boot = 1000) {
+  if(nrow(data) == 0) return(NULL)
+  
+  # Bootstrap function for multiplicative CF
+  boot_func <- function(data, indices) {
+    sample_data <- data[indices, ]
+    m_estimator(sample_data$multiplicative_cf_mean)
+  }
+  
+  # Calculate bootstrap CI
+  boot_results <- boot(data, boot_func, R = n_boot)
+  ci <- boot.ci(boot_results, type = "bca")
+  
+  return(data.frame(
+    mean_cf = mean(data$multiplicative_cf_mean, na.rm = TRUE),
+    robust_cf = m_estimator(data$multiplicative_cf_mean),
+    ci_lower = ifelse(is.null(ci$bca[4]), NA, ci$bca[4]),
+    ci_upper = ifelse(is.null(ci$bca[5]), NA, ci$bca[5]),
+    n_obs = nrow(data)
+  ))
+}
+
+# Calculate prey-level CFs with CIs
+prey_level_cfs <- bio_aggregated %>%
+  group_by(prey_common) %>%
+  group_modify(~ bootstrap_cf_ci(.x)) %>%
+  ungroup()
+
+# 5. Mixed effects model for seal variability
+model_seal_variability <- function(data) {
+  model <- lmer(log_multiplicative_cf ~ prey_common + (1 | seal_id) + (1 | diet), 
+                data = data)
+  
+  # Extract variance components
+  variance_components <- as.data.frame(VarCorr(model))
+  seal_variance <- variance_components %>% 
+    filter(grp == "seal_id") %>% 
+    pull(vcov)
+  
+  return(list(
+    model = model,
+    seal_variance = seal_variance,
+    total_variance = sum(variance_components$vcov) + attr(VarCorr(model), "sc")^2
+  ))
+}
+
+# Need to add log_multiplicative_cf to bio_aggregated for the model
+bio_aggregated_for_model <- bio_aggregated %>%
+  mutate(log_multiplicative_cf = log(multiplicative_cf_mean))
+
+seal_variability <- model_seal_variability(bio_aggregated_for_model)
+
+# 6. Create final correction factor table
+final_correction_factors <- prey_level_cfs %>%
+  mutate(
+    seal_variance_ratio = seal_variability$seal_variance / seal_variability$total_variance,
+    recommended_cf = robust_cf,
+    cf_type = "multiplicative"
+  ) %>%
+  select(prey_common, recommended_cf, ci_lower, ci_upper, n_obs, seal_variance_ratio)
+
+# Print results
+print("Final Correction Factors:")
+print(final_correction_factors)
+
+print("Diet-level Summary:")
+print(diet_level_cfs)
+
+print("Seal Variability:")
+print(paste("Seal variance proportion:", round(seal_variability$seal_variance_ratio, 3)))
+
+# 7. Optional: Compare different CF calculation methods
+cf_method_comparison <- prey_level_cfs %>%
+  left_join(
+    diet_level_cfs %>% 
+      group_by(prey_common) %>% 
+      summarize(
+        mean_additive = mean(mean_additive),
+        mean_ratio = mean(mean_ratio),
+        .groups = 'drop'
+      ),
+    by = "prey_common"
+  ) %>%
+  select(prey_common, multiplicative = robust_cf, additive = mean_additive, ratio = mean_ratio)
+
+print("CF Method Comparison:")
+print(cf_method_comparison)
+```
+
+modular version
+```{r}
+library(tidyverse)
+library(lme4)
+library(boot)
+
+# Core function 1: Calculate correction factors for individual observations
+calculate_correction_factors <- function(observed_prop, expected_prop) {
+  # Avoid division by zero and boundary issues
+  observed_prop_adj <- ifelse(observed_prop == 0, 0.001, 
+                             ifelse(observed_prop == 1, 0.999, observed_prop))
+  expected_prop_adj <- ifelse(expected_prop == 0, 0.001, 
+                             ifelse(expected_prop == 1, 0.999, expected_prop))
+  
+  data.frame(
+    multiplicative_cf = expected_prop_adj / observed_prop_adj,
+    additive_cf = expected_prop_adj - observed_prop_adj,
+    ratio_cf = (expected_prop_adj * (1 - observed_prop_adj)) / 
+               (observed_prop_adj * (1 - expected_prop_adj))
+  )
+}
+
+# Core function 2: M-estimator (robust mean)
+# Updated M-estimator function with error handling
+m_estimator <- function(x, k = 1.28) {
+  # Remove NA values
+  x <- x[!is.na(x)]
+  
+  # If no valid values, return NA
+  if(length(x) == 0) {
+    return(NA)
+  }
+  
+  # If only one value, return that value
+  if(length(x) == 1) {
+    return(x)
+  }
+  
+  mu <- median(x)
+  mad_val <- mad(x)
+  
+  # If MAD is 0 (all values identical), return the median
+  if(mad_val == 0) {
+    return(mu)
+  }
+  
+  for(i in 1:20) {
+    residuals <- x - mu
+    weights <- ifelse(abs(residuals) <= k * mad_val, 1, (k * mad_val) / abs(residuals))
+    mu_new <- sum(weights * x) / sum(weights)
+    if(abs(mu_new - mu) < 1e-6) break
+    mu <- mu_new
+  }
+  return(mu)
+}
+
+# NEW STEP 0: Preprocess data to remove taxa not in expected diet and recalculate proportions
+# SIMPLIFIED Step 0: Just remove taxa not in expected diet
+step0_preprocess_data <- function(joined_data, expected_prop_col = "fish_prop", taxon_col = "prey_common") {
+  cat("Preprocessing data: removing taxa not in expected diet...\n")
+  
+  # Check if the expected proportion column exists
+  if(!expected_prop_col %in% names(joined_data)) {
+    stop("Expected proportion column '", expected_prop_col, "' not found in the data. Available columns: ", 
+         paste(names(joined_data), collapse = ", "))
+  }
+  
+  # Check if the taxon column exists
+  if(!taxon_col %in% names(joined_data)) {
+    stop("Taxon column '", taxon_col, "' not found in the data. Available columns: ", 
+         paste(names(joined_data), collapse = ", "))
+  }
+  
+  # Count how many observations have NA in expected proportion
+  na_count <- joined_data %>%
+    filter(is.na(!!sym(expected_prop_col))) %>%
+    nrow()
+  
+  if(na_count > 0) {
+    cat("Removing", na_count, "observations of taxa not in expected diet\n")
+    
+    # Show which taxa are being removed
+    removed_taxa <- joined_data %>%
+      filter(is.na(!!sym(expected_prop_col))) %>%
+      count(!!sym(taxon_col)) %>%
+      pull(!!sym(taxon_col))
+    
+    cat("Removed taxa:", paste(removed_taxa, collapse = ", "), "\n")
+  }
+  
+  # Remove taxa not in expected diet (simple filter)
+  filtered_data <- joined_data %>%
+    filter(!is.na(!!sym(expected_prop_col)))
+  
+  cat("Preprocessing complete. Remaining observations:", nrow(filtered_data), "\n")
+  
+  return(filtered_data)
+}
+
+# Updated Step 1 to use the preprocessed data
+step1_calculate_individual_cfs <- function(preprocessed_data, expected_prop_col = "fish_prop") {
+  cat("Calculating individual correction factors using expected column:", expected_prop_col, "...\n")
+  
+  result <- preprocessed_data %>%
+    rowwise() %>%
+    mutate(
+      cf_data = list(calculate_correction_factors(observed_prop, !!sym(expected_prop_col)))
+    ) %>%
+    unnest_wider(cf_data) %>%
+    mutate(
+      log_multiplicative_cf = log(multiplicative_cf),
+      log_ratio_cf = log(ratio_cf)
+    )
+  
+  cat("Individual CF calculation complete.\n")
+  cat("Added columns: multiplicative_cf, additive_cf, ratio_cf, log_multiplicative_cf, log_ratio_cf\n")
+  
+  return(result)
+}
+
+
+# STEP 2: Aggregate technical replicates - UPDATED with taxon_col
+step2_aggregate_technical_reps <- function(joined_data_with_cfs, 
+                                          expected_prop_col = "fish_prop", 
+                                          taxon_col = "prey_common") {
+  cat("Aggregating technical replicates using taxon column:", taxon_col, "...\n")
+  
+  # Check if the expected proportion column exists
+  if(!expected_prop_col %in% names(joined_data_with_cfs)) {
+    stop("Expected proportion column '", expected_prop_col, "' not found in the data. Available columns: ", 
+         paste(names(joined_data_with_cfs), collapse = ", "))
+  }
+  
+  # Check if the taxon column exists
+  if(!taxon_col %in% names(joined_data_with_cfs)) {
+    stop("Taxon column '", taxon_col, "' not found in the data. Available columns: ", 
+         paste(names(joined_data_with_cfs), collapse = ", "))
+  }
+  
+  result <- joined_data_with_cfs %>%
+    group_by(sampleid, seal_id, !!sym(taxon_col), diet, biol) %>%
+    summarize(
+      observed_prop_mean = mean(observed_prop, na.rm = TRUE),
+      multiplicative_cf_mean = mean(multiplicative_cf, na.rm = TRUE),
+      additive_cf_mean = mean(additive_cf, na.rm = TRUE),
+      ratio_cf_mean = mean(ratio_cf, na.rm = TRUE),
+      expected_prop = first(!!sym(expected_prop_col)),
+      n_tech_reps = n(),
+      .groups = 'drop'
+    ) %>%
+    mutate(log_multiplicative_cf = log(multiplicative_cf_mean))
+  
+  # Rename the taxon column to a standard name for downstream functions
+  result <- result %>%
+    rename(taxon_group = !!sym(taxon_col))
+  
+  cat("Technical replicate aggregation complete.\n")
+  cat("Grouped by: sampleid, seal_id,", taxon_col, "diet, biol\n")
+  cat("Averaged: observed_prop, multiplicative_cf, additive_cf, ratio_cf\n")
+  
+  return(result)
+}
+
+# STEP 3: Calculate diet-level CFs - UPDATED to use taxon_group
+# Updated Step 3 with better error handling
+step3_calculate_diet_level_cfs <- function(bio_aggregated) {
+  cat("Calculating diet-level correction factors...\n")
+  
+  # Check for NA values in key columns
+  na_check <- bio_aggregated %>%
+    summarise(
+      na_multiplicative = sum(is.na(multiplicative_cf_mean)),
+      na_diet = sum(is.na(diet)),
+      na_taxon = sum(is.na(taxon_group)),
+      total_rows = n()
+    )
+  
+  cat("Data check - NA multiplicative_cf_mean:", na_check$na_multiplicative, 
+      "NA diet:", na_check$na_diet,
+      "NA taxon_group:", na_check$na_taxon,
+      "Total rows:", na_check$total_rows, "\n")
+  
+  # Remove rows with NA in key columns
+  bio_aggregated_clean <- bio_aggregated %>%
+    filter(!is.na(multiplicative_cf_mean), 
+           !is.na(diet),
+           !is.na(taxon_group))
+  
+  cat("After cleaning, rows remaining:", nrow(bio_aggregated_clean), "\n")
+  
+  result <- bio_aggregated_clean %>%
+    group_by(diet, taxon_group) %>%
+    summarize(
+      # Multiplicative CF stats
+      mean_multiplicative = mean(multiplicative_cf_mean, na.rm = TRUE),
+      sd_multiplicative = sd(multiplicative_cf_mean, na.rm = TRUE),
+      robust_multiplicative = m_estimator(multiplicative_cf_mean),
+      
+      # Additive CF stats
+      mean_additive = mean(additive_cf_mean, na.rm = TRUE),
+      sd_additive = sd(additive_cf_mean, na.rm = TRUE),
+      robust_additive = m_estimator(additive_cf_mean),
+      
+      # Ratio CF stats
+      mean_ratio = mean(ratio_cf_mean, na.rm = TRUE),
+      sd_ratio = sd(ratio_cf_mean, na.rm = TRUE),
+      robust_ratio = m_estimator(ratio_cf_mean),
+      
+      # Sample sizes
+      n_seals = n_distinct(seal_id),
+      n_biol_reps = n(),
+      
+      .groups = 'drop'
+    )
+  
+  cat("Diet-level CF calculation complete.\n")
+  cat("Groups calculated:", nrow(result), "\n")
+  
+  return(result)
+}
+
+
+# Updated Step 4: Bootstrap all three correction factor types
+step4_bootstrap_taxon_level_cfs <- function(bio_aggregated, n_boot = 1000) {
+  cat("Bootstrapping taxon-level confidence intervals for all correction methods...\n")
+  
+  # Clean data first
+  bio_aggregated_clean <- bio_aggregated %>%
+    filter(!is.na(multiplicative_cf_mean),
+           !is.na(additive_cf_mean),
+           !is.na(ratio_cf_mean),
+           !is.na(taxon_group))
+  
+  # Generic bootstrap function for any correction factor type
+  bootstrap_cf_ci <- function(data, cf_column, n_boot = 1000) {
+    if(nrow(data) == 0) return(NULL)
+    
+    boot_func <- function(data, indices) {
+      sample_data <- data[indices, ]
+      m_estimator(sample_data[[cf_column]])
+    }
+    
+    tryCatch({
+      boot_results <- boot(data, boot_func, R = n_boot)
+      ci <- boot.ci(boot_results, type = "bca")
+      
+      data.frame(
+        mean_cf = mean(data[[cf_column]], na.rm = TRUE),
+        robust_cf = m_estimator(data[[cf_column]]),
+        ci_lower = ifelse(is.null(ci$bca[4]), NA, ci$bca[4]),
+        ci_upper = ifelse(is.null(ci$bca[5]), NA, ci$bca[5]),
+        n_obs = nrow(data)
+      )
+    }, error = function(e) {
+      # Return NA if bootstrap fails
+      data.frame(
+        mean_cf = mean(data[[cf_column]], na.rm = TRUE),
+        robust_cf = m_estimator(data[[cf_column]]),
+        ci_lower = NA,
+        ci_upper = NA,
+        n_obs = nrow(data)
+      )
+    })
+  }
+  
+  # Bootstrap for multiplicative CFs
+  multiplicative_results <- bio_aggregated_clean %>%
+    group_by(taxon_group) %>%
+    group_modify(~ bootstrap_cf_ci(.x, "multiplicative_cf_mean", n_boot)) %>%
+    ungroup() %>%
+    rename(
+      mean_multiplicative = mean_cf,
+      robust_multiplicative = robust_cf,
+      ci_lower_multiplicative = ci_lower,
+      ci_upper_multiplicative = ci_upper,
+      n_obs_multiplicative = n_obs
+    )
+  
+  # Bootstrap for additive CFs
+  additive_results <- bio_aggregated_clean %>%
+    group_by(taxon_group) %>%
+    group_modify(~ bootstrap_cf_ci(.x, "additive_cf_mean", n_boot)) %>%
+    ungroup() %>%
+    rename(
+      mean_additive = mean_cf,
+      robust_additive = robust_cf,
+      ci_lower_additive = ci_lower,
+      ci_upper_additive = ci_upper,
+      n_obs_additive = n_obs
+    )
+  
+  # Bootstrap for ratio CFs
+  ratio_results <- bio_aggregated_clean %>%
+    group_by(taxon_group) %>%
+    group_modify(~ bootstrap_cf_ci(.x, "ratio_cf_mean", n_boot)) %>%
+    ungroup() %>%
+    rename(
+      mean_ratio = mean_cf,
+      robust_ratio = robust_cf,
+      ci_lower_ratio = ci_lower,
+      ci_upper_ratio = ci_upper,
+      n_obs_ratio = n_obs
+    )
+  
+  # Combine all results
+  result <- multiplicative_results %>%
+    full_join(additive_results, by = "taxon_group") %>%
+    full_join(ratio_results, by = "taxon_group")
+  
+  cat("Bootstrap CI calculation complete for all three methods.\n")
+  cat("Taxon groups processed:", nrow(result), "\n")
+  
+  return(result)
+}
+
+# STEP 5: Model seal variability - UPDATED to use taxon_group
+# Updated Step 5 with better error handling and alternatives
+step5_model_seal_variability <- function(bio_aggregated) {
+  cat("Modeling seal variability...\n")
+  
+  # Check if we have enough data for the model
+  if(nrow(bio_aggregated) < 10) {
+    cat("Insufficient data for seal variability model (n < 10). Using simple variance calculation.\n")
+    return(simple_variance_calculation(bio_aggregated))
+  }
+  
+  # Check if we have multiple seals
+  n_seals <- n_distinct(bio_aggregated$seal_id, na.rm = TRUE)
+  if(n_seals < 2) {
+    cat("Only one seal in data. Cannot estimate seal variability.\n")
+    return(list(
+      model = NULL,
+      seal_variance = 0,
+      total_variance = var(bio_aggregated$log_multiplicative_cf, na.rm = TRUE),
+      seal_variance_ratio = 0
+    ))
+  }
+  
+  # Try the full model with error handling
+  result <- tryCatch({
+    model <- lmer(log_multiplicative_cf ~ taxon_group + (1 | seal_id) + (1 | diet), 
+                  data = bio_aggregated,
+                  control = lmerControl(optimizer = "Nelder_Mead", 
+                                       calc.derivs = FALSE))
+    
+    # Extract variance components
+    variance_components <- as.data.frame(VarCorr(model))
+    seal_variance <- variance_components %>% 
+      filter(grp == "seal_id") %>% 
+      pull(vcov)
+    
+    total_variance <- sum(variance_components$vcov) + attr(VarCorr(model), "sc")^2
+    
+    list(
+      model = model,
+      seal_variance = seal_variance,
+      total_variance = total_variance,
+      seal_variance_ratio = seal_variance / total_variance
+    )
+  }, error = function(e) {
+    cat("Mixed model failed:", e$message, "\nTrying simplified model...\n")
+    
+    # Try simplified model without diet random effect
+    tryCatch({
+      model <- lmer(log_multiplicative_cf ~ taxon_group + (1 | seal_id), 
+                    data = bio_aggregated,
+                    control = lmerControl(optimizer = "Nelder_Mead"))
+      
+      variance_components <- as.data.frame(VarCorr(model))
+      seal_variance <- variance_components %>% 
+        filter(grp == "seal_id") %>% 
+        pull(vcov)
+      
+      total_variance <- sum(variance_components$vcov) + attr(VarCorr(model), "sc")^2
+      
+      list(
+        model = model,
+        seal_variance = seal_variance,
+        total_variance = total_variance,
+        seal_variance_ratio = seal_variance / total_variance
+      )
+    }, error = function(e2) {
+      cat("Simplified model also failed:", e2$message, "\nUsing simple variance calculation.\n")
+      return(simple_variance_calculation(bio_aggregated))
+    })
+  })
+  
+  cat("Seal variability modeling complete.\n")
+  cat("Seal variance proportion:", round(result$seal_variance_ratio, 3), "\n")
+  
+  return(result)
+}
+
+# Simple variance calculation as fallback
+simple_variance_calculation <- function(bio_aggregated) {
+  # Calculate variance components manually
+  if(n_distinct(bio_aggregated$seal_id, na.rm = TRUE) > 1) {
+    # Simple ANOVA-based variance estimation
+    anova_model <- aov(log_multiplicative_cf ~ seal_id + taxon_group, data = bio_aggregated)
+    anova_summary <- summary(anova_model)
+    
+    # Extract variance components (simplified)
+    seal_variance <- max(0, (anova_summary[[1]]["seal_id", "Mean Sq"] - 
+                             anova_summary[[1]]["Residuals", "Mean Sq"]) / 
+                            anova_summary[[1]]["seal_id", "Df"])
+    total_variance <- var(bio_aggregated$log_multiplicative_cf, na.rm = TRUE)
+    
+    list(
+      model = anova_model,
+      seal_variance = max(0, seal_variance),  # Ensure non-negative
+      total_variance = total_variance,
+      seal_variance_ratio = max(0, seal_variance) / total_variance
+    )
+  } else {
+    list(
+      model = NULL,
+      seal_variance = 0,
+      total_variance = var(bio_aggregated$log_multiplicative_cf, na.rm = TRUE),
+      seal_variance_ratio = 0
+    )
+  }
+}
+
+# Alternative: Skip seal variability entirely and set to 0
+step5_simple_seal_variability <- function(bio_aggregated) {
+  cat("Using simple seal variability estimation (set to 0)...\n")
+  
+  return(list(
+    model = NULL,
+    seal_variance = 0,
+    total_variance = var(bio_aggregated$log_multiplicative_cf, na.rm = TRUE),
+    seal_variance_ratio = 0
+  ))
+}
+
+# STEP 6: Create final correction factor table - UPDATED to use taxon_group
+step6_create_final_cf_table <- function(taxon_level_cfs, seal_variability, marker_name, original_taxon_name = "taxon_group") {
+  cat("Creating final correction factor table for", marker_name, "...\n")
+  
+  result <- taxon_level_cfs %>%
+    mutate(
+      marker = marker_name,
+      seal_variance_ratio = seal_variability$seal_variance_ratio,
+      recommended_cf = robust_cf,
+      cf_type = "multiplicative"
+    ) %>%
+    rename(!!original_taxon_name := taxon_group) %>%
+    select(marker, !!sym(original_taxon_name), recommended_cf, ci_lower, ci_upper, n_obs, seal_variance_ratio)
+  
+  cat("Final CF table created.\n")
+  
+  return(result)
+}
+
+# STEP 7: Compare CF calculation methods - UPDATED to use taxon_group
+step7_compare_cf_methods <- function(diet_level_cfs, taxon_level_cfs, marker_name) {
+  cat("Comparing CF calculation methods for", marker_name, "...\n")
+  
+  result <- taxon_level_cfs %>%
+    left_join(
+      diet_level_cfs %>% 
+        group_by(taxon_group) %>% 
+        summarize(
+          mean_additive = mean(mean_additive),
+          mean_ratio = mean(mean_ratio),
+          .groups = 'drop'
+        ),
+      by = "taxon_group"
+    ) %>%
+    mutate(marker = marker_name) %>%
+    select(marker, taxon_group, multiplicative = robust_cf, additive = mean_additive, ratio = mean_ratio)
+  
+  cat("Method comparison complete.\n")
+  
+  return(result)
+}
+# Usage example:
+# method_comparison <- step7_compare_cf_methods(diet_level_cfs, prey_level_cfs, "MiFish")
+# print(method_comparison)
+
+#Let's also add a diagnostic function to check the data before processing
+diagnose_data_issues <- function(bio_aggregated) {
+  cat("=== DATA DIAGNOSTICS ===\n")
+  
+  # Check for NA values
+  na_summary <- bio_aggregated %>%
+    summarise(
+      na_multiplicative = sum(is.na(multiplicative_cf_mean)),
+      na_additive = sum(is.na(additive_cf_mean)),
+      na_ratio = sum(is.na(ratio_cf_mean)),
+      na_diet = sum(is.na(diet)),
+      na_taxon = sum(is.na(taxon_group)),
+      total_rows = n()
+    )
+  
+  print(na_summary)
+  
+  # Check groups with NA diet
+  na_diet_groups <- bio_aggregated %>%
+    filter(is.na(diet)) %>%
+    count(taxon_group)
+  
+  if(nrow(na_diet_groups) > 0) {
+    cat("\nGroups with NA diet:\n")
+    print(na_diet_groups)
+  }
+  
+  # Check for infinite values
+  inf_summary <- bio_aggregated %>%
+    summarise(
+      inf_multiplicative = sum(is.infinite(multiplicative_cf_mean)),
+      inf_additive = sum(is.infinite(additive_cf_mean)),
+      inf_ratio = sum(is.infinite(ratio_cf_mean))
+    )
+  
+  print(inf_summary)
+  
+  cat("=== END DIAGNOSTICS ===\n")
+}
+
+```
+
+```{r}
+# Now run the complete workflow with preprocessing:
+# For MiFish data:
+CF_MF_preprocessed <- step0_preprocess_data(CF_MF_data_joined, "fish_prop", "prey_common")
+CF_MF_joined_data_with_cfs <- step1_calculate_individual_cfs(CF_MF_preprocessed, "fish_prop")
+CF_MF_bio_aggregated <- step2_aggregate_technical_reps(CF_MF_joined_data_with_cfs, "fish_prop", "prey_common")
+CF_MF_diet_level_cfs <- step3_calculate_diet_level_cfs(CF_MF_bio_aggregated)
+CF_MF_taxon_level_cfs <- step4_bootstrap_taxon_level_cfs(CF_MF_bio_aggregated, n_boot = 1000)
+CF_MF_seal_variability <- step5_simple_seal_variability(CF_MF_bio_aggregated)  
+CF_MF_final_cfs <- step6_create_final_cf_table(CF_MF_taxon_level_cfs, CF_MF_seal_variability, "MiFish", "prey_common")
+CF_MF_method_comparison <- step7_compare_cf_methods(CF_MF_diet_level_cfs, CF_MF_taxon_level_cfs, "MiFish")
+
+# For 18S data:
+CF_18S_preprocessed <- step0_preprocess_data(CF_18S_data_expected, "actual_prop", "P18S_taxon_assign")
+CF_18S_joined_data_with_cfs <- step1_calculate_individual_cfs(CF_18S_preprocessed, "actual_prop")
+CF_18S_bio_aggregated <- step2_aggregate_technical_reps(CF_18S_joined_data_with_cfs, "actual_prop", "P18S_taxon_assign")
+CF_18S_diet_level_cfs <- step3_calculate_diet_level_cfs(CF_18S_bio_aggregated)
+CF_18S_taxon_level_cfs <- step4_bootstrap_taxon_level_cfs(CF_18S_bio_aggregated, n_boot = 1000)
+CF_18S_seal_variability <- step5_simple_seal_variability(CF_18S_bio_aggregated) 
+CF_18S_final_cfs <- step6_create_final_cf_table(CF_18S_taxon_level_cfs, CF_18S_seal_variability, "18S", "P18S_taxon_assign")
+CF_18S_method_comparison <- step7_compare_cf_methods(CF_18S_diet_level_cfs, CF_18S_taxon_level_cfs, "18S")
+
+```
+
+```{r}
+# Updated function to apply all three correction methods
+apply_correction_factors <- function(preprocessed_data, taxon_level_cfs, marker_name, taxon_col, expected_prop_col) {
+  cat("Applying all three correction methods to", marker_name, "data...\n")
+  
+  # Check what columns are available in taxon_level_cfs
+  cat("Available columns in taxon_level_cfs:", paste(names(taxon_level_cfs), collapse = ", "), "\n")
+  
+  # Rename taxon column to standard name for joining
+  preprocessed_data <- preprocessed_data %>%
+    rename(taxon_group = !!sym(taxon_col))
+  
+  # Join with correction factors
+  corrected_data <- preprocessed_data %>%
+    left_join(taxon_level_cfs %>% 
+                select(taxon_group, 
+                       robust_multiplicative, 
+                       robust_additive, 
+                       robust_ratio),
+              by = "taxon_group")
+  
+  # Apply all three correction methods
+  corrected_data <- corrected_data %>%
+    mutate(
+      # Multiplicative correction
+      corrected_prop_multiplicative = observed_prop * robust_multiplicative,
+      
+      # Additive correction
+      corrected_prop_additive = observed_prop + robust_additive,
+      
+      # Ratio correction (logistic transformation)
+      corrected_prop_ratio = case_when(
+        robust_ratio == 0 ~ 0,
+        is.infinite(robust_ratio) ~ 1,
+        TRUE ~ (observed_prop * robust_ratio) / 
+               (1 - observed_prop + (observed_prop * robust_ratio))
+      )
+    )
+  
+  # Ensure proportions stay within [0,1] bounds
+  corrected_data <- corrected_data %>%
+    mutate(
+      corrected_prop_multiplicative = pmax(0, pmin(1, corrected_prop_multiplicative)),
+      corrected_prop_additive = pmax(0, pmin(1, corrected_prop_additive)),
+      corrected_prop_ratio = pmax(0, pmin(1, corrected_prop_ratio))
+    )
+  
+  cat("All three correction methods applied to", nrow(corrected_data), "observations\n")
+  
+  return(corrected_data)
+}
+
+# Updated performance calculation for all three methods
+calculate_correction_performance <- function(corrected_data, expected_prop_col) {
+  cat("Calculating performance metrics for all three correction methods...\n")
+  
+  performance_data <- corrected_data %>%
+    rename(expected_prop = !!sym(expected_prop_col)) %>%
+    mutate(
+      # Absolute differences for each method
+      abs_diff_observed = abs(observed_prop - expected_prop),
+      abs_diff_multiplicative = abs(corrected_prop_multiplicative - expected_prop),
+      abs_diff_additive = abs(corrected_prop_additive - expected_prop),
+      abs_diff_ratio = abs(corrected_prop_ratio - expected_prop),
+      
+      # Improvements for each method
+      improvement_multiplicative = abs_diff_observed - abs_diff_multiplicative,
+      improvement_additive = abs_diff_observed - abs_diff_additive,
+      improvement_ratio = abs_diff_observed - abs_diff_ratio,
+      
+      # Percentage improvements
+      pct_improvement_multiplicative = ifelse(abs_diff_observed > 0, 
+                                             (improvement_multiplicative / abs_diff_observed) * 100,
+                                             ifelse(improvement_multiplicative > 0, 100, 0)),
+      pct_improvement_additive = ifelse(abs_diff_observed > 0, 
+                                       (improvement_additive / abs_diff_observed) * 100,
+                                       ifelse(improvement_additive > 0, 100, 0)),
+      pct_improvement_ratio = ifelse(abs_diff_observed > 0, 
+                                    (improvement_ratio / abs_diff_observed) * 100,
+                                    ifelse(improvement_ratio > 0, 100, 0))
+    )
+  
+  return(performance_data)
+}
+
+# Updated taxon performance summary for all three methods
+create_taxon_performance_summary <- function(performance_data, marker_name) {
+  cat("Creating taxon-level performance summary for all three methods for", marker_name, "...\n")
+  
+  taxon_summary <- performance_data %>%
+    group_by(taxon_group) %>%
+    summarize(
+      # Sample sizes
+      n_obs = n(),
+      n_samples = n_distinct(sampleid),
+      
+      # Mean absolute differences
+      mean_abs_observed = mean(abs_diff_observed, na.rm = TRUE),
+      mean_abs_multiplicative = mean(abs_diff_multiplicative, na.rm = TRUE),
+      mean_abs_additive = mean(abs_diff_additive, na.rm = TRUE),
+      mean_abs_ratio = mean(abs_diff_ratio, na.rm = TRUE),
+      
+      # Median absolute differences
+      median_abs_observed = median(abs_diff_observed, na.rm = TRUE),
+      median_abs_multiplicative = median(abs_diff_multiplicative, na.rm = TRUE),
+      median_abs_additive = median(abs_diff_additive, na.rm = TRUE),
+      median_abs_ratio = median(abs_diff_ratio, na.rm = TRUE),
+      
+      # Mean improvements
+      mean_improvement_multiplicative = mean(improvement_multiplicative, na.rm = TRUE),
+      mean_improvement_additive = mean(improvement_additive, na.rm = TRUE),
+      mean_improvement_ratio = mean(improvement_ratio, na.rm = TRUE),
+      
+      # Percentage of observations improved
+      pct_improved_multiplicative = mean(improvement_multiplicative > 0, na.rm = TRUE) * 100,
+      pct_improved_additive = mean(improvement_additive > 0, na.rm = TRUE) * 100,
+      pct_improved_ratio = mean(improvement_ratio > 0, na.rm = TRUE) * 100,
+      
+      .groups = 'drop'
+    ) %>%
+    mutate(marker = marker_name) %>%
+    # Identify best method for each taxon
+    rowwise() %>%
+    mutate(
+      best_method = case_when(
+        mean_abs_multiplicative == min(mean_abs_multiplicative, mean_abs_additive, mean_abs_ratio, na.rm = TRUE) ~ "Multiplicative",
+        mean_abs_additive == min(mean_abs_multiplicative, mean_abs_additive, mean_abs_ratio, na.rm = TRUE) ~ "Additive",
+        mean_abs_ratio == min(mean_abs_multiplicative, mean_abs_additive, mean_abs_ratio, na.rm = TRUE) ~ "Ratio",
+        TRUE ~ "Multiplicative"  # Default case
+      )
+    ) %>%
+    ungroup()
+  
+  return(taxon_summary)
+}
+
+# Function to plot performance comparison by taxon
+plot_taxon_performance_comparison <- function(taxon_summary, marker_name) {
+  # Prepare data for plotting
+  plot_data <- taxon_summary %>%
+    select(taxon_group, mean_abs_observed, mean_abs_multiplicative, 
+           mean_abs_additive, mean_abs_ratio) %>%
+    pivot_longer(
+      cols = c(mean_abs_multiplicative, mean_abs_additive, mean_abs_ratio),
+      names_to = "method",
+      values_to = "mean_abs_diff"
+    ) %>%
+    mutate(
+      method = case_when(
+        method == "mean_abs_multiplicative" ~ "Multiplicative",
+        method == "mean_abs_additive" ~ "Additive",
+        method == "mean_abs_ratio" ~ "Ratio"
+      )
+    )
+  
+  # Create plot
+  p <- ggplot(plot_data, aes(x = taxon_group, y = mean_abs_diff, fill = method)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top",
+      plot.title = element_text(hjust = 0.5)
+    ) +
+    labs(
+      title = paste("Correction Method Performance by Taxon -", marker_name),
+      subtitle = "Mean absolute difference from expected proportion (lower is better)",
+      y = "Mean Absolute Difference",
+      x = "Taxon Group",
+      fill = "Correction Method"
+    ) +
+    scale_fill_manual(values = c(
+      "Multiplicative" = "#2ca02c", 
+      "Additive" = "#d62728",
+      "Ratio" = "#9467bd"
+    )) +
+    scale_linetype_manual(values = c("Observed (No Correction)" = "dashed"))
+  
+  return(p)
+}
+
+# Function to plot improvement percentages by taxon
+plot_improvement_by_taxon <- function(taxon_summary, marker_name) {
+  plot_data <- taxon_summary %>%
+    select(taxon_group, pct_improved_multiplicative, 
+           pct_improved_additive, pct_improved_ratio) %>%
+    pivot_longer(
+      cols = c(pct_improved_multiplicative, pct_improved_additive, pct_improved_ratio),
+      names_to = "method",
+      values_to = "pct_improved"
+    ) %>%
+    mutate(
+      method = case_when(
+        method == "pct_improved_multiplicative" ~ "Multiplicative",
+        method == "pct_improved_additive" ~ "Additive",
+        method == "pct_improved_ratio" ~ "Ratio"
+      )
+    )
+  
+  p <- ggplot(plot_data, aes(x = taxon_group, y = pct_improved, fill = method)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top",
+      plot.title = element_text(hjust = 0.5)
+    ) +
+    labs(
+      title = paste("Percentage of Observations Improved -", marker_name),
+      subtitle = "Higher percentages indicate more consistent improvement",
+      y = "Percentage of Observations Improved (%)",
+      x = "Taxon Group",
+      fill = "Correction Method"
+    ) +
+    scale_fill_manual(values = c(
+      "Multiplicative" = "#2ca02c", 
+      "Additive" = "#d62728",
+      "Ratio" = "#9467bd"
+    )) +
+    ylim(0, 100)
+  
+  return(p)
+}
+```
+
+
+
+Great, now we need to see how each method worked
+```{r}
+# Function to calculate absolute differences for each method
+calculate_method_performance <- function(bio_aggregated) {
+  performance_data <- bio_aggregated %>%
+    mutate(
+      # Calculate corrected proportions for each method
+      corrected_multiplicative = observed_prop_mean * multiplicative_cf_mean,
+      corrected_additive = observed_prop_mean + additive_cf_mean,
+      corrected_ratio = (observed_prop_mean * ratio_cf_mean) / 
+                       (1 - observed_prop_mean + (observed_prop_mean * ratio_cf_mean)),
+      
+      # Calculate absolute differences from expected proportion
+      abs_diff_multiplicative = abs(corrected_multiplicative - expected_prop),
+      abs_diff_additive = abs(corrected_additive - expected_prop),
+      abs_diff_ratio = abs(corrected_ratio - expected_prop)
+    )
+  
+  return(performance_data)
+}
+
+# Function to create method comparison plot
+plot_method_comparison <- function(performance_data, marker_name, group_col = "taxon_group") {
+  # Prepare data for plotting
+  plot_data <- performance_data %>%
+    select(all_of(group_col), abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) %>%
+    pivot_longer(
+      cols = c(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio),
+      names_to = "method",
+      values_to = "abs_diff"
+    ) %>%
+    mutate(
+      method = case_when(
+        method == "abs_diff_multiplicative" ~ "Multiplicative",
+        method == "abs_diff_additive" ~ "Additive", 
+        method == "abs_diff_ratio" ~ "Ratio"
+      )
+    ) %>%
+    group_by(!!sym(group_col), method) %>%
+    summarize(
+      mean_abs_diff = mean(abs_diff, na.rm = TRUE),
+      se_abs_diff = sd(abs_diff, na.rm = TRUE) / sqrt(n()),
+      .groups = 'drop'
+    )
+  
+  # Create plot
+  p <- ggplot(plot_data, aes(x = !!sym(group_col), y = mean_abs_diff, fill = method)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    geom_errorbar(
+      aes(ymin = mean_abs_diff - se_abs_diff, ymax = mean_abs_diff + se_abs_diff),
+      position = position_dodge(0.9),
+      width = 0.25
+    ) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top",
+      plot.title = element_text(hjust = 0.5),
+      plot.subtitle = element_text(hjust = 0.5)
+    ) +
+    labs(
+      title = paste("Digestion Correction Method Performance -", marker_name),
+      subtitle = "Mean absolute difference from expected proportion (lower is better)",
+      y = "Mean Absolute Difference from Expected",
+      x = "Taxon Group",
+      fill = "Correction Method"
+    ) +
+    scale_fill_manual(values = c(
+      "Multiplicative" = "#2ca02c", 
+      "Additive" = "#d62728",
+      "Ratio" = "#9467bd"
+    ))
+  
+  return(p)
+}
+
+# Additional function to plot by diet as well
+plot_method_comparison_by_diet <- function(performance_data, marker_name) {
+  # Prepare data for plotting
+  plot_data <- performance_data %>%
+    select(diet, taxon_group, abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) %>%
+    pivot_longer(
+      cols = c(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio),
+      names_to = "method",
+      values_to = "abs_diff"
+    ) %>%
+    mutate(
+      method = case_when(
+        method == "abs_diff_multiplicative" ~ "Multiplicative",
+        method == "abs_diff_additive" ~ "Additive",
+        method == "abs_diff_ratio" ~ "Ratio"
+      )
+    ) %>%
+    group_by(diet, method) %>%
+    summarize(
+      mean_abs_diff = mean(abs_diff, na.rm = TRUE),
+      se_abs_diff = sd(abs_diff, na.rm = TRUE) / sqrt(n()),
+      .groups = 'drop'
+    )
+  
+  # Create plot
+  p <- ggplot(plot_data, aes(x = diet, y = mean_abs_diff, fill = method)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    geom_errorbar(
+      aes(ymin = mean_abs_diff - se_abs_diff, ymax = mean_abs_diff + se_abs_diff),
+      position = position_dodge(0.9),
+      width = 0.25
+    ) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top",
+      plot.title = element_text(hjust = 0.5),
+      plot.subtitle = element_text(hjust = 0.5)
+    ) +
+    labs(
+      title = paste("Method Performance by Diet -", marker_name),
+      subtitle = "Mean absolute difference from expected proportion (lower is better)",
+      y = "Mean Absolute Difference from Expected",
+      x = "Diet",
+      fill = "Correction Method"
+    ) +
+    scale_fill_manual(values = c(
+      "Multiplicative" = "#2ca02c", 
+      "Additive" = "#d62728",
+      "Ratio" = "#9467bd"
+    ))
+  
+  return(p)
+}
+
+# Function to create summary statistics table
+create_method_summary_table <- function(performance_data, marker_name) {
+  summary_table <- performance_data %>%
+    select(abs_diff_multiplicative, abs_diff_additive, abs_diff_ratio) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "method",
+      values_to = "abs_diff"
+    ) %>%
+    mutate(
+      method = case_when(
+        method == "abs_diff_multiplicative" ~ "Multiplicative",
+        method == "abs_diff_additive" ~ "Additive",
+        method == "abs_diff_ratio" ~ "Ratio"
+      )
+    ) %>%
+    group_by(method) %>%
+    summarize(
+      mean_abs_diff = mean(abs_diff, na.rm = TRUE),
+      median_abs_diff = median(abs_diff, na.rm = TRUE),
+      sd_abs_diff = sd(abs_diff, na.rm = TRUE),
+      n_obs = n(),
+      .groups = 'drop'
+    ) %>%
+    mutate(marker = marker_name) %>%
+    arrange(mean_abs_diff)  # Sort by best performing method
+  
+  return(summary_table)
+}
+```
+
+```{r}
+# Calculate performance data for both markers
+CF_MF_performance <- calculate_method_performance(CF_MF_bio_aggregated)
+CF_18S_performance <- calculate_method_performance(CF_18S_bio_aggregated)
+
+# Create comparison plots
+plot_MF_taxon <- plot_method_comparison(CF_MF_performance, "MiFish", "taxon_group")
+plot_18S_taxon <- plot_method_comparison(CF_18S_performance, "18S", "taxon_group")
+
+plot_MF_diet <- plot_method_comparison_by_diet(CF_MF_performance, "MiFish")
+plot_18S_diet <- plot_method_comparison_by_diet(CF_18S_performance, "18S")
+
+# Display plots
+print(plot_MF_taxon)
+print(plot_18S_taxon)
+print(plot_MF_diet)
+print(plot_18S_diet)
+
+# Create summary tables
+MF_summary <- create_method_summary_table(CF_MF_performance, "MiFish")
+S18_summary <- create_method_summary_table(CF_18S_performance, "18S")
+
+# Combine and display summary tables
+combined_summary <- bind_rows(MF_summary, S18_summary)
+print("Method Performance Summary (lower values are better):")
+print(combined_summary)
+
+# Identify best method for each marker
+best_methods <- combined_summary %>%
+  group_by(marker) %>%
+  slice_min(mean_abs_diff, n = 1)
+
+print("Best performing method for each marker:")
+print(best_methods)
+
+# Save plots
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_MF_method_comparison_taxon.png"), plot_MF_taxon, width = 12, height = 8)
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_18S_method_comparison_taxon.png"), plot_18S_taxon, width = 12, height = 8)
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_MF_method_comparison_diet.png"), plot_MF_diet, width = 10, height = 6)
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_18S_method_comparison_diet.png"), plot_18S_diet, width = 10, height = 6)
+
+# Save summary table
+write.csv(combined_summary, here("output-files","DigestionBias_Correction_method_performance_summary.csv"), row.names = F)
+```
+
+
+And now we need to apply it back to the controlled feeding study diet data to see how well it gets each species back to expected diet proportion and visualize how well they did
+```{r}
+# Apply corrections to MiFish data
+CF_MF_corrected <- apply_correction_factors(CF_MF_preprocessed, 
+                                           CF_MF_taxon_level_cfs, 
+                                           "MiFish", 
+                                           "prey_common")
+
+CF_MF_performance <- calculate_correction_performance(CF_MF_corrected, "fish_prop")
+CF_MF_taxon_summary <- create_taxon_performance_summary(CF_MF_performance, "MiFish")
+
+# Apply corrections to 18S data
+CF_18S_corrected <- apply_correction_factors(CF_18S_preprocessed, 
+                                            CF_18S_taxon_level_cfs, 
+                                            "18S", 
+                                            "P18S_taxon_assign")
+
+CF_18S_performance <- calculate_correction_performance(CF_18S_corrected, "actual_prop")
+CF_18S_taxon_summary <- create_taxon_performance_summary(CF_18S_performance, "18S")
+
+# Create performance plots
+plot_MF_taxon_performance <- plot_taxon_performance_comparison(CF_MF_taxon_summary, "MiFish")
+plot_18S_taxon_performance <- plot_taxon_performance_comparison(CF_18S_taxon_summary, "18S")
+
+plot_MF_improvement <- plot_improvement_by_taxon(CF_MF_taxon_summary, "MiFish")
+plot_18S_improvement <- plot_improvement_by_taxon(CF_18S_taxon_summary, "18S")
+
+# Display results
+print(plot_MF_taxon_performance)
+print(plot_18S_taxon_performance)
+print(plot_MF_improvement)
+print(plot_18S_improvement)
+
+# Print summary tables
+print("MiFish Taxon Performance Summary:")
+print(CF_MF_taxon_summary)
+
+print("18S Taxon Performance Summary:")
+print(CF_18S_taxon_summary)
+
+# Identify best overall method for each marker
+best_methods_MF <- CF_MF_taxon_summary %>%
+  count(best_method) %>%
+  arrange(desc(n))
+
+best_methods_18S <- CF_18S_taxon_summary %>%
+  count(best_method) %>%
+  arrange(desc(n))
+
+print("Best methods by frequency for MiFish:")
+print(best_methods_MF)
+
+print("Best methods by frequency for 18S:")
+print(best_methods_18S)
+
+# Save plots
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_MF_method_comparison_taxon.png"), plot_MF_taxon_performance, width = 12, height = 8)
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_18S_method_comparison_taxon.png"), plot_18S_taxon_performance, width = 12, height = 8)
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_MF_method_improvent.png"), plot_MF_improvement, width = 10, height = 6)
+ggsave(here("Figures","CorrectionBiasRun","ContFeed_18S_method_comparison_improvement.png"), plot_18S_improvement, width = 10, height = 6)
+
+# Save summary table
+write.csv(CF_18S_taxon_summary, here("output-files","DigestionBias_18S_Correction_method_performance_summary.csv"), row.names = F)
+write.csv(CF_MF_taxon_summary, here("output-files","DigestionBias_MF_Correction_method_performance_summary.csv"), row.names = F)
+```
+
+Now apply correction to the wild samples that have had tissue correction done already. First we need to create a method to map the digestion factor to taxonomic groups so that the wide variety of species can be corrected. 
+```{r}
+
+```
+
+Now show those wild scats before and after
+```{r}
+
+```
+
